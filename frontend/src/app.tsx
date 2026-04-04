@@ -10,6 +10,7 @@ import {
   ChevronsUpDown,
   FolderKanban,
   Bug,
+  House,
   LayoutGrid,
   ListFilter,
   List,
@@ -354,7 +355,7 @@ export default function App() {
       setProjects(next)
       setProjectModalOpen(false)
       setProjectDraft(emptyProjectDraft)
-      navigate(projectKanbanPath(response.project.id))
+      navigate(projectDashboardPath(response.project.id))
       await loadProject(response.project.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create project')
@@ -671,6 +672,12 @@ export default function App() {
               {selectedProjectId && (
                 <>
                   <li class={sidebarCollapsed ? '' : 'pl-4'}>
+                    <button class={`${activePage === 'dashboard' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(projectDashboardPath(selectedProjectId))} title="Dashboard" aria-label="Dashboard">
+                      <House size={16} />
+                      {!sidebarCollapsed && <span>Dashboard</span>}
+                    </button>
+                  </li>
+                  <li class={sidebarCollapsed ? '' : 'pl-4'}>
                     <button class={`${activePage === 'kanban' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(projectKanbanPath(selectedProjectId))} title="Kanban" aria-label="Kanban">
                       <FolderKanban size={16} />
                       {!sidebarCollapsed && <span>Kanban</span>}
@@ -729,7 +736,7 @@ export default function App() {
             <ProjectDirectory
               projects={projects}
               onCreate={() => setProjectModalOpen(true)}
-              onOpen={(projectId) => navigate(projectKanbanPath(projectId))}
+              onOpen={(projectId) => navigate(projectDashboardPath(projectId))}
             />
           )}
 
@@ -808,6 +815,17 @@ export default function App() {
                     </div>
                   </section>
                 </>
+              )}
+
+              {route.view === 'dashboard' && (
+                <ProjectDashboardPage
+                  project={tree.project}
+                  units={standardUnits}
+                  bugs={bugUnits}
+                  comments={comments}
+                  onEditProject={() => navigate(projectSettingsPath(tree.project.id))}
+                  onAddPrimary={() => openNewUnit(tree.project.id)}
+                />
               )}
 
               {route.view === 'api' && (
@@ -1035,7 +1053,7 @@ function ProjectDirectory(props: { projects: Project[]; onCreate: () => void; on
           <div>
             <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">Projects</p>
             <h2 class="mt-2 text-2xl font-black">Choose a workspace</h2>
-            <p class="mt-2 max-w-2xl text-sm text-base-content/85">Select a project to jump into the kanban flow, or create a new one from here.</p>
+            <p class="mt-2 max-w-2xl text-sm text-base-content/85">Select a project to open its dashboard, or create a new one from here.</p>
           </div>
           <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={props.onCreate} title="Create project" aria-label="Create project">
             <Plus size={16} />
@@ -1097,6 +1115,104 @@ function ProjectHero(props: { project: Project; tags: string[]; onEdit: () => vo
         </div>
       </div>
     </header>
+  )
+}
+
+function ProjectDashboardPage(props: {
+  project: Project
+  units: Unit[]
+  bugs: Unit[]
+  comments: Comment[]
+  onEditProject: () => void
+  onAddPrimary: () => void
+}) {
+  const standardStatusesForCounts = ['todo', 'in_progress', 'review', 'done'] as UnitStatus[]
+  const typeCounts = {
+    epic: props.units.filter((unit) => unit.type === 'epic').length,
+    feature: props.units.filter((unit) => unit.type === 'feature').length,
+    story: props.units.filter((unit) => unit.type === 'story').length,
+    task: props.units.filter((unit) => unit.type === 'task').length,
+  }
+  const statusCounts = Object.fromEntries(standardStatusesForCounts.map((status) => [status, props.units.filter((unit) => unit.status === status).length])) as Record<string, number>
+  const quickLinks = [
+    { title: 'Kanban', body: 'Open the live delivery board and move work between lanes.', path: projectKanbanPath(props.project.id), icon: FolderKanban },
+    { title: 'Backlog', body: 'Browse the hierarchy, filter by type, and expand the work breakdown.', path: projectBacklogPath(props.project.id), icon: BookOpen },
+    { title: 'API', body: 'See the available endpoints for local integrations and automation.', path: projectApiPath(props.project.id), icon: SquarePen },
+  ]
+
+  return (
+    <section class="space-y-5">
+      <ProjectHero project={props.project} tags={props.project.tags} onEdit={props.onEditProject} onAddPrimary={props.onAddPrimary} addLabel="Add epic" addTitle="Add epic" />
+
+      <section class="grid gap-4 xl:grid-cols-[1.1fr,0.9fr]">
+        <div class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+          <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">Overview</p>
+          <h2 class="mt-2 text-2xl font-black">Project dashboard</h2>
+          <p class="mt-2 max-w-3xl text-sm text-base-content/85">Get a quick read on the current delivery shape, then jump straight into the board, backlog, or API docs.</p>
+          <div class="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <MetricCard label="Epics" value={typeCounts.epic} accent={props.project.unitColors.epic} />
+            <MetricCard label="Features" value={typeCounts.feature} accent={props.project.unitColors.feature} />
+            <MetricCard label="Stories" value={typeCounts.story} accent={props.project.unitColors.story} />
+            <MetricCard label="Tasks" value={typeCounts.task} accent={props.project.unitColors.task} />
+          </div>
+        </div>
+
+        <div class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+          <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">Flow</p>
+          <h2 class="mt-2 text-xl font-black">Work by status</h2>
+          <div class="mt-4 space-y-3">
+            {standardStatusesForCounts.map((status) => (
+              <div class="flex items-center justify-between rounded-xl border border-base-300 bg-base-100 p-3">
+                <div class="flex items-center gap-3">
+                  <span class="h-3 w-3 rounded-full" style={{ backgroundColor: props.project.statusColors[status] }} />
+                  <span class="text-sm font-medium">{statusLabel(status)}</span>
+                </div>
+                <span class="text-lg font-bold">{statusCounts[status]}</span>
+              </div>
+            ))}
+            <div class="grid gap-3 sm:grid-cols-2">
+              <MetricCard label="Bugs" value={props.bugs.length} accent={props.project.unitColors.bug} compact />
+              <MetricCard label="Comments" value={props.comments.length} accent={props.project.color} compact />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">Quick links</p>
+            <h2 class="mt-2 text-xl font-black">Jump into the project</h2>
+          </div>
+        </div>
+        <div class="grid gap-4 lg:grid-cols-3">
+          {quickLinks.map((link) => (
+            <a href={link.path} class="group rounded-[1.25rem] border border-base-300 bg-base-100 p-4 transition hover:-translate-y-0.5 hover:border-primary/50">
+              <div class="flex items-start justify-between gap-3">
+                <div class="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <link.icon size={18} />
+                </div>
+                <ChevronRight class="text-base-content/45 transition group-hover:translate-x-0.5 group-hover:text-primary" size={18} />
+              </div>
+              <h3 class="mt-4 text-lg font-bold">{link.title}</h3>
+              <p class="mt-2 text-sm text-base-content/82">{link.body}</p>
+            </a>
+          ))}
+        </div>
+      </section>
+    </section>
+  )
+}
+
+function MetricCard(props: { label: string; value: number; accent: string; compact?: boolean }) {
+  return (
+    <div class={`rounded-xl border border-base-300 bg-base-100 ${props.compact ? 'p-3' : 'p-4'}`}>
+      <div class="flex items-center gap-3">
+        <span class={`${props.compact ? 'h-3 w-3' : 'h-4 w-4'} rounded-full`} style={{ backgroundColor: props.accent }} />
+        <span class="text-sm text-base-content/80">{props.label}</span>
+      </div>
+      <div class={`${props.compact ? 'mt-2 text-2xl' : 'mt-3 text-3xl'} font-black`}>{props.value}</div>
+    </div>
   )
 }
 
@@ -1949,7 +2065,8 @@ function parseRoute(pathname: string): AppRoute {
   if (segments[0] !== 'projects' || !segments[1]) return { kind: 'root' }
 
   const projectId = segments[1]
-  if (segments.length === 2) return { kind: 'project', projectId, view: 'kanban', chain: [] }
+  if (segments.length === 2) return { kind: 'project', projectId, view: 'dashboard', chain: [] }
+  if (segments[2] === 'kanban' && segments.length === 3) return { kind: 'project', projectId, view: 'kanban', chain: [] }
   if (segments[2] === 'backlog' && segments.length === 3) return { kind: 'project', projectId, view: 'backlog', chain: [] }
   if (segments[2] === 'bugs' && segments.length === 3) return { kind: 'project', projectId, view: 'bugs', chain: [] }
   if (segments[2] === 'api' && segments.length === 3) return { kind: 'project', projectId, view: 'api', chain: [] }
@@ -2012,8 +2129,12 @@ function resolveRouteContext(route: Extract<AppRoute, { kind: 'project' }>, unit
   return { projectId: route.projectId, currentUnit, chainUnits, taskUnit, invalid }
 }
 
-function projectKanbanPath(projectId: string) {
+function projectDashboardPath(projectId: string) {
   return `/projects/${projectId}`
+}
+
+function projectKanbanPath(projectId: string) {
+  return `/projects/${projectId}/kanban`
 }
 
 function projectBacklogPath(projectId: string) {
@@ -2033,11 +2154,13 @@ function projectSettingsPath(projectId: string) {
 }
 
 function projectPathForSelection(projectId: string, page: ProjectPage | null) {
+  if (page === 'dashboard') return projectDashboardPath(projectId)
   if (page === 'backlog') return projectBacklogPath(projectId)
+  if (page === 'kanban') return projectKanbanPath(projectId)
   if (page === 'bugs') return projectBugsPath(projectId)
   if (page === 'api') return projectApiPath(projectId)
   if (page === 'settings') return projectSettingsPath(projectId)
-  return projectKanbanPath(projectId)
+  return projectDashboardPath(projectId)
 }
 
 function taskParentPath(route: Extract<AppRoute, { kind: 'project' }>) {

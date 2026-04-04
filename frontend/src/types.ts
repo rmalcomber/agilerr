@@ -75,4 +75,4 @@ export interface SmartAddMessage {
   content: string
 }
 
-export type ProjectPage = 'backlog' | 'kanban' | 'bugs' | 'api' | 'settings'
+export type ProjectPage = 'dashboard' | 'backlog' | 'kanban' | 'bugs' | 'api' | 'settings'
