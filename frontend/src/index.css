@@ -31,3 +31,30 @@ body {
 .prose {
   font-size: 0.9rem;
 }
+
+.prose {
+  color: rgba(236, 239, 244, 0.92);
+}
+
+.prose :where(h1, h2, h3, h4, strong, code) {
+  color: rgba(248, 250, 252, 0.98);
+}
+
+.prose :where(ul, ol) {
+  padding-left: 1.25rem;
+}
+
+.prose :where(li) {
+  margin: 0.25rem 0;
+}
+
+.prose :where(code) {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 0.375rem;
+  padding: 0.1rem 0.35rem;
+}
+
+.prose :where(pre) {
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}

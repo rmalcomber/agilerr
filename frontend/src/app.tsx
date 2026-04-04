@@ -849,11 +849,6 @@ export default function App() {
               </section>
             </div>
 
-            <div class="rounded-2xl border border-base-300 bg-base-100 p-4">
-              <h3 class="mb-3 font-semibold">Preview</h3>
-              <Markdown source={unitEditor.description || '*No description yet.*'} />
-            </div>
-
             <div class="flex flex-wrap justify-between gap-2">
               {unitEditor.id ? (
                 <button class="btn btn-error btn-outline" type="button" onClick={() => void deleteUnit(unitEditor.id!)}>
@@ -1169,7 +1164,7 @@ function UnitDetailContent(props: {
       </div>
 
       <div class="rounded-2xl border border-base-300 bg-base-100 p-4">
-        <Markdown source={props.unit.description || '*No description yet.*'} />
+        <CollapsibleMarkdown title="Description" source={props.unit.description || '*No description yet.*'} />
       </div>
 
       {!props.hideActions && (
@@ -1384,6 +1379,25 @@ function MentionPanel(props: { title: string; items: Mention[]; onPick: (mention
 function Markdown(props: { source: string }) {
   const html = useMemo(() => DOMPurify.sanitize(marked.parse(props.source, { breaks: true }) as string), [props.source])
   return <div class="prose prose-sm max-w-none" dangerouslySetInnerHTML={{ __html: html }} />
+}
+
+function CollapsibleMarkdown(props: { title: string; source: string }) {
+  const preview = plainText(props.source)
+  return (
+    <details class="group" open={false}>
+      <summary class="flex cursor-pointer list-none items-start justify-between gap-4">
+        <div class="min-w-0">
+          <div class="font-semibold">{props.title}</div>
+          <div class="mt-1 line-clamp-2 text-sm text-base-content/82">{preview || 'No description yet.'}</div>
+        </div>
+        <span class="mt-0.5 text-xs font-semibold uppercase tracking-[0.2em] text-base-content/70 group-open:hidden">Expand</span>
+        <span class="mt-0.5 hidden text-xs font-semibold uppercase tracking-[0.2em] text-base-content/70 group-open:block">Collapse</span>
+      </summary>
+      <div class="mt-4 border-t border-base-300 pt-4">
+        <Markdown source={props.source} />
+      </div>
+    </details>
+  )
 }
 
 function UnitTreeNode(props: {
