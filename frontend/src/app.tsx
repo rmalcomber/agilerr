@@ -28,6 +28,7 @@ import md5 from 'blueimp-md5'
 import { api } from './lib/api'
 import { pb } from './lib/pocketbase'
 import type {
+  ApiDocsConfig,
   Comment,
   Mention,
   Project,
@@ -201,6 +202,7 @@ export default function App() {
   const [unitEditor, setUnitEditor] = useState<UnitDraft | null>(null)
   const [detailUnitId, setDetailUnitId] = useState<string | null>(null)
   const [apiProjectId, setApiProjectId] = useState<string>(() => (typeof window === 'undefined' ? '' : window.localStorage.getItem(storageKeys.lastProjectId) || ''))
+  const [apiDocsConfig, setApiDocsConfig] = useState<ApiDocsConfig>({ configured: false, headerName: 'X-API-Key', apiKey: '', apiKeyMasked: 'Not configured' })
   const [bugsView, setBugsView] = useState<'list' | 'kanban'>(() => readStoredBugsView())
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readStoredBoolean(storageKeys.sidebarCollapsed, false))
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
@@ -367,6 +369,9 @@ export default function App() {
 
       const me = await api.me()
       setCurrentUser(me.user)
+
+      const docsConfig = await api.docsConfig()
+      setApiDocsConfig(docsConfig)
 
       const response = await api.projects()
       setProjects(response.projects)
@@ -862,7 +867,7 @@ export default function App() {
                       </div>
                     </div>
                   </section>
-                  <ApiDocsPage project={tree.project} projects={projects} units={units} />
+                  <ApiDocsPage project={tree.project} projects={projects} units={units} docsConfig={apiDocsConfig} />
                 </>
               )}
             </>
@@ -2306,7 +2311,7 @@ function countBacklogNodes(nodes: BacklogDisplayNode[]): number {
   return nodes.reduce((total, node) => total + 1 + countBacklogNodes(node.children), 0)
 }
 
-function ApiDocsPage(props: { project: Project; projects: Project[]; units: Unit[] }) {
+function ApiDocsPage(props: { project: Project; projects: Project[]; units: Unit[]; docsConfig: ApiDocsConfig }) {
   const base = '/api/agilerr'
   const [selectedProjectId, setSelectedProjectId] = useState(props.project.id)
   const [selectedUnitId, setSelectedUnitId] = useState(props.units[0]?.id || '')
@@ -2331,21 +2336,21 @@ function ApiDocsPage(props: { project: Project; projects: Project[]; units: Unit
       method: 'GET',
       path: `${base}/me`,
       description: 'Return the authenticated user profile used by the app shell.',
-      curl: `curl -X GET ${base}/me \\\n  -H "Authorization: <pb_auth_token>"`,
+      curl: `curl -X GET ${base}/me \\\n  -H "${props.docsConfig.headerName}: ${props.docsConfig.apiKey || '<agilerr_api_key>'}"`,
     },
     {
       key: 'projects-list',
       method: 'GET',
       path: `${base}/projects`,
       description: 'List projects visible to the authenticated user.',
-      curl: `curl -X GET ${base}/projects \\\n  -H "Authorization: <pb_auth_token>"`,
+      curl: `curl -X GET ${base}/projects \\\n  -H "${props.docsConfig.headerName}: ${props.docsConfig.apiKey || '<agilerr_api_key>'}"`,
     },
     {
       key: 'projects-create',
       method: 'POST',
       path: `${base}/projects`,
       description: 'Create a project with name, description, color, and tags.',
-      curl: `curl -X POST ${base}/projects \\\n  -H "Authorization: <pb_auth_token>" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "name": "Platform refresh",\n    "description": "Main delivery project",\n    "color": "#2563eb",\n    "tags": ["platform", "delivery"]\n  }'`,
+      curl: `curl -X POST ${base}/projects \\\n  -H "${props.docsConfig.headerName}: ${props.docsConfig.apiKey || '<agilerr_api_key>'}" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "name": "Platform refresh",\n    "description": "Main delivery project",\n    "color": "#2563eb",\n    "tags": ["platform", "delivery"]\n  }'`,
     },
     {
       key: 'project-update',
@@ -2353,7 +2358,7 @@ function ApiDocsPage(props: { project: Project; projects: Project[]; units: Unit
       path: `${base}/projects/${selectedProject.id}`,
       description: 'Update the selected project metadata and color settings.',
       variables: [{ label: 'Project', type: 'project' as const }],
-      curl: `curl -X PATCH ${base}/projects/${selectedProject.id} \\\n  -H "Authorization: <pb_auth_token>" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "name": "${selectedProject.name}",\n    "description": "${escapeJson(selectedProject.description || 'Updated project description')}"\n  }'`,
+      curl: `curl -X PATCH ${base}/projects/${selectedProject.id} \\\n  -H "${props.docsConfig.headerName}: ${props.docsConfig.apiKey || '<agilerr_api_key>'}" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "name": "${selectedProject.name}",\n    "description": "${escapeJson(selectedProject.description || 'Updated project description')}"\n  }'`,
     },
     {
       key: 'project-tree',
@@ -2361,7 +2366,7 @@ function ApiDocsPage(props: { project: Project; projects: Project[]; units: Unit
       path: `${base}/projects/${selectedProject.id}`,
       description: 'Fetch the selected project, items, comments, users, and tag suggestions in a single response.',
       variables: [{ label: 'Project', type: 'project' as const }],
-      curl: `curl -X GET ${base}/projects/${selectedProject.id} \\\n  -H "Authorization: <pb_auth_token>"`,
+      curl: `curl -X GET ${base}/projects/${selectedProject.id} \\\n  -H "${props.docsConfig.headerName}: ${props.docsConfig.apiKey || '<agilerr_api_key>'}"`,
     },
     {
       key: 'project-suggest',
@@ -2369,7 +2374,7 @@ function ApiDocsPage(props: { project: Project; projects: Project[]; units: Unit
       path: `${base}/projects/${selectedProject.id}/suggest?q=backlog`,
       description: 'Return tag, user, and item suggestions for mentions and tagging.',
       variables: [{ label: 'Project', type: 'project' as const }],
-      curl: `curl -X GET "${base}/projects/${selectedProject.id}/suggest?q=backlog" \\\n  -H "Authorization: <pb_auth_token>"`,
+      curl: `curl -X GET "${base}/projects/${selectedProject.id}/suggest?q=backlog" \\\n  -H "${props.docsConfig.headerName}: ${props.docsConfig.apiKey || '<agilerr_api_key>'}"`,
     },
     {
       key: 'units-create',
@@ -2377,7 +2382,7 @@ function ApiDocsPage(props: { project: Project; projects: Project[]; units: Unit
       path: `${base}/projects/${selectedProject.id}/units`,
       description: 'Create a new item under the selected project.',
       variables: [{ label: 'Project', type: 'project' as const }],
-      curl: `curl -X POST ${base}/projects/${selectedProject.id}/units \\\n  -H "Authorization: <pb_auth_token>" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "type": "epic",\n    "status": "todo",\n    "title": "Ship onboarding",\n    "description": "Create the onboarding experience",\n    "tags": ["onboarding", "mvp"]\n  }'`,
+      curl: `curl -X POST ${base}/projects/${selectedProject.id}/units \\\n  -H "${props.docsConfig.headerName}: ${props.docsConfig.apiKey || '<agilerr_api_key>'}" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "type": "epic",\n    "status": "todo",\n    "title": "Ship onboarding",\n    "description": "Create the onboarding experience",\n    "tags": ["onboarding", "mvp"]\n  }'`,
     },
     {
       key: 'units-update',
@@ -2385,7 +2390,7 @@ function ApiDocsPage(props: { project: Project; projects: Project[]; units: Unit
       path: `${base}/units/${selectedUnit?.id || '[select-item]'}`,
       description: 'Edit the selected item.',
       variables: [{ label: 'Item', type: 'unit' as const }],
-      curl: `curl -X PATCH ${base}/units/${selectedUnit?.id || '<unit_id>'} \\\n  -H "Authorization: <pb_auth_token>" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "title": "${escapeJson(selectedUnit?.title || 'Updated title')}",\n    "status": "${selectedUnit?.status || 'todo'}"\n  }'`,
+      curl: `curl -X PATCH ${base}/units/${selectedUnit?.id || '<unit_id>'} \\\n  -H "${props.docsConfig.headerName}: ${props.docsConfig.apiKey || '<agilerr_api_key>'}" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "title": "${escapeJson(selectedUnit?.title || 'Updated title')}",\n    "status": "${selectedUnit?.status || 'todo'}"\n  }'`,
     },
     {
       key: 'units-move',
@@ -2393,7 +2398,7 @@ function ApiDocsPage(props: { project: Project; projects: Project[]; units: Unit
       path: `${base}/units/${selectedUnit?.id || '[select-item]'}/move`,
       description: 'Move the selected item between kanban lanes using a status body.',
       variables: [{ label: 'Item', type: 'unit' as const }],
-      curl: `curl -X POST ${base}/units/${selectedUnit?.id || '<unit_id>'}/move \\\n  -H "Authorization: <pb_auth_token>" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "status": "in_progress"\n  }'`,
+      curl: `curl -X POST ${base}/units/${selectedUnit?.id || '<unit_id>'}/move \\\n  -H "${props.docsConfig.headerName}: ${props.docsConfig.apiKey || '<agilerr_api_key>'}" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "status": "in_progress"\n  }'`,
     },
     {
       key: 'units-delete',
@@ -2401,7 +2406,7 @@ function ApiDocsPage(props: { project: Project; projects: Project[]; units: Unit
       path: `${base}/units/${selectedUnit?.id || '[select-item]'}`,
       description: 'Delete the selected item after its child items are removed.',
       variables: [{ label: 'Item', type: 'unit' as const }],
-      curl: `curl -X DELETE ${base}/units/${selectedUnit?.id || '<unit_id>'} \\\n  -H "Authorization: <pb_auth_token>"`,
+      curl: `curl -X DELETE ${base}/units/${selectedUnit?.id || '<unit_id>'} \\\n  -H "${props.docsConfig.headerName}: ${props.docsConfig.apiKey || '<agilerr_api_key>'}"`,
     },
     {
       key: 'comments-list',
@@ -2409,7 +2414,7 @@ function ApiDocsPage(props: { project: Project; projects: Project[]; units: Unit
       path: `${base}/units/${selectedUnit?.id || '[select-item]'}/comments`,
       description: 'List comments for the selected item.',
       variables: [{ label: 'Item', type: 'unit' as const }],
-      curl: `curl -X GET ${base}/units/${selectedUnit?.id || '<unit_id>'}/comments \\\n  -H "Authorization: <pb_auth_token>"`,
+      curl: `curl -X GET ${base}/units/${selectedUnit?.id || '<unit_id>'}/comments \\\n  -H "${props.docsConfig.headerName}: ${props.docsConfig.apiKey || '<agilerr_api_key>'}"`,
     },
     {
       key: 'comments-create',
@@ -2417,14 +2422,14 @@ function ApiDocsPage(props: { project: Project; projects: Project[]; units: Unit
       path: `${base}/units/${selectedUnit?.id || '[select-item]'}/comments`,
       description: 'Create a markdown comment with optional mentions.',
       variables: [{ label: 'Item', type: 'unit' as const }],
-      curl: `curl -X POST ${base}/units/${selectedUnit?.id || '<unit_id>'}/comments \\\n  -H "Authorization: <pb_auth_token>" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "body": "Looks good from API docs."\n  }'`,
+      curl: `curl -X POST ${base}/units/${selectedUnit?.id || '<unit_id>'}/comments \\\n  -H "${props.docsConfig.headerName}: ${props.docsConfig.apiKey || '<agilerr_api_key>'}" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "body": "Looks good from API docs."\n  }'`,
     },
     {
       key: 'smart-add',
       method: 'POST',
       path: `${base}/smart-add`,
       description: 'Refine a draft item using the configured OpenAI endpoint.',
-      curl: `curl -X POST ${base}/smart-add \\\n  -H "Authorization: <pb_auth_token>" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "unitType": "story",\n    "title": "Tighten login flow",\n    "description": "Make the login flow clearer for new users",\n    "messages": []\n  }'`,
+      curl: `curl -X POST ${base}/smart-add \\\n  -H "${props.docsConfig.headerName}: ${props.docsConfig.apiKey || '<agilerr_api_key>'}" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "unitType": "story",\n    "title": "Tighten login flow",\n    "description": "Make the login flow clearer for new users",\n    "messages": []\n  }'`,
     },
   ]
 
@@ -2442,7 +2447,12 @@ function ApiDocsPage(props: { project: Project; projects: Project[]; units: Unit
   return (
     <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
       <h2 class="text-lg font-bold">API Usage</h2>
-      <p class="mt-2 text-sm text-base-content/82">All endpoints below require the PocketBase auth token in the `Authorization` header. Variable segments use the dropdowns shown on each endpoint.</p>
+      <p class="mt-2 text-sm text-base-content/82">All endpoints below accept the configured API key in the `X-API-Key` header. Variable segments use the dropdowns shown on each endpoint.</p>
+      <div class="mt-4 rounded-xl border border-base-300 bg-base-200/50 p-4">
+        <div class="text-xs font-semibold uppercase tracking-[0.2em] text-base-content/70">Configured API key</div>
+        <div class="mt-2 font-mono text-sm">{props.docsConfig.apiKeyMasked}</div>
+        <div class="mt-1 text-xs text-base-content/75">The masked value is shown here, but copied curl commands use the full configured key.</div>
+      </div>
       <div class="mt-6 space-y-4">
         {endpoints.map((endpoint) => (
           <ApiEndpointCard

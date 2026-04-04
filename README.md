@@ -19,7 +19,7 @@ Agilerr is a lean Agile Scrum board built as:
 ## Local Development
 
 1. Copy `.env.example` to `.env` and set `ADMIN_PASSWORD`.
-2. Optional: set `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`.
+2. Optional: set `AGILERR_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`.
 3. Run the backend:
 
 ```bash
@@ -71,6 +71,7 @@ docker compose up --build
 
 - `ADMIN_EMAIL`
 - `ADMIN_PASSWORD`
+- `AGILERR_API_KEY`
 - `OPENAI_API_KEY`
 - `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
@@ -93,4 +94,7 @@ docker compose up --build
 - `POST /api/agilerr/units/{unitId}/comments`
 - `POST /api/agilerr/smart-add`
 
-All `/api/agilerr/*` endpoints require an authenticated PocketBase user token in the `Authorization` header.
+All `/api/agilerr/*` endpoints accept either:
+
+- a PocketBase user token in the `Authorization` header
+- the configured `AGILERR_API_KEY` in the `X-API-Key` header

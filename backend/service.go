@@ -65,9 +65,10 @@ func (s *AgilerrService) EnsureAdmin() error {
 }
 
 func (s *AgilerrService) RegisterRoutes(e *core.ServeEvent) {
-	group := e.Router.Group("/api/agilerr").Bind(apis.RequireAuth(collectionUsers))
+	group := e.Router.Group("/api/agilerr").BindFunc(s.requireAPIAccess)
 
 	group.GET("/me", s.handleMe)
+	group.GET("/docs-config", s.handleDocsConfig)
 	group.GET("/projects", s.handleProjectsList)
 	group.POST("/projects", s.handleProjectCreate)
 	group.GET("/projects/{projectId}", s.handleProjectTree)
@@ -82,9 +83,49 @@ func (s *AgilerrService) RegisterRoutes(e *core.ServeEvent) {
 	group.POST("/smart-add", s.handleSmartAdd)
 }
 
+func (s *AgilerrService) requireAPIAccess(e *core.RequestEvent) error {
+	apiKey := strings.TrimSpace(e.Request.Header.Get("X-API-Key"))
+	if apiKey != "" {
+		if strings.TrimSpace(s.config.APIKey) == "" || apiKey != strings.TrimSpace(s.config.APIKey) {
+			return apis.NewUnauthorizedError("invalid api key", nil)
+		}
+		userRecord, err := s.findAPIActor()
+		if err != nil {
+			return apis.NewUnauthorizedError("api key actor is unavailable", err)
+		}
+		e.Auth = userRecord
+		return e.Next()
+	}
+	if e.Auth == nil {
+		return e.UnauthorizedError("The request requires a valid auth token or API key.", nil)
+	}
+	if e.Auth.Collection().Name != collectionUsers {
+		return e.ForbiddenError("The authorized record is not allowed to perform this action.", nil)
+	}
+	return e.Next()
+}
+
+func (s *AgilerrService) findAPIActor() (*core.Record, error) {
+	users, err := s.app.FindCollectionByNameOrId(collectionUsers)
+	if err != nil {
+		return nil, err
+	}
+	return s.app.FindAuthRecordByEmail(users, s.config.AdminEmail)
+}
+
 func (s *AgilerrService) handleMe(e *core.RequestEvent) error {
 	return e.JSON(http.StatusOK, map[string]any{
 		"user": recordToUser(e.Auth),
+	})
+}
+
+func (s *AgilerrService) handleDocsConfig(e *core.RequestEvent) error {
+	apiKey := strings.TrimSpace(s.config.APIKey)
+	return e.JSON(http.StatusOK, map[string]any{
+		"configured":   apiKey != "",
+		"headerName":   "X-API-Key",
+		"apiKey":       apiKey,
+		"apiKeyMasked": maskSecret(apiKey),
 	})
 }
 
@@ -665,6 +706,17 @@ func (s *AgilerrService) syncProjectItemColors(projectRecord *core.Record) error
 func gravatarURL(email string) string {
 	sum := md5.Sum([]byte(strings.ToLower(strings.TrimSpace(email))))
 	return "https://www.gravatar.com/avatar/" + hex.EncodeToString(sum[:]) + "?d=identicon&s=120"
+}
+
+func maskSecret(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "Not configured"
+	}
+	if len(value) <= 8 {
+		return strings.Repeat("*", len(value))
+	}
+	return value[:4] + strings.Repeat("*", len(value)-8) + value[len(value)-4:]
 }
 
 func badRequest(e *core.RequestEvent, message string, err error) error {

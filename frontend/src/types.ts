@@ -76,4 +76,11 @@ export interface SmartAddMessage {
   content: string
 }
 
+export interface ApiDocsConfig {
+  configured: boolean
+  headerName: string
+  apiKey: string
+  apiKeyMasked: string
+}
+
 export type ProjectPage = 'dashboard' | 'backlog' | 'kanban' | 'bugs' | 'api' | 'settings'

@@ -12,6 +12,7 @@ type Config struct {
 
 	AdminEmail    string
 	AdminPassword string
+	APIKey        string
 
 	OpenAIAPIKey  string
 	OpenAIBaseURL string
@@ -28,6 +29,7 @@ func loadConfig() Config {
 		AllowedOrigins: origins,
 		AdminEmail:     envOrDefault("ADMIN_EMAIL", "admin@agilerr.local"),
 		AdminPassword:  envOrDefault("ADMIN_PASSWORD", "change-me-now"),
+		APIKey:         os.Getenv("AGILERR_API_KEY"),
 		OpenAIAPIKey:   os.Getenv("OPENAI_API_KEY"),
 		OpenAIBaseURL:  envOrDefault("OPENAI_BASE_URL", "https://api.openai.com"),
 		OpenAIModel:    envOrDefault("OPENAI_MODEL", "gpt-5-mini"),

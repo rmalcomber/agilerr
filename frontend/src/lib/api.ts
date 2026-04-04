@@ -1,5 +1,5 @@
 import { pb } from './pocketbase'
-import type { Comment, Project, ProjectTree, SmartAddMessage, Suggestions, Unit, User } from '../types'
+import type { ApiDocsConfig, Comment, Project, ProjectTree, SmartAddMessage, Suggestions, Unit, User } from '../types'
 
 const apiBase = import.meta.env.VITE_API_URL || ''
 
@@ -24,6 +24,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   me: () => request<{ user: User }>('/api/agilerr/me'),
+  docsConfig: () => request<ApiDocsConfig>('/api/agilerr/docs-config'),
   projects: () => request<{ projects: Project[] }>('/api/agilerr/projects'),
   createProject: (body: Partial<Project>) =>
     request<{ project: Project }>('/api/agilerr/projects', {
