@@ -4,6 +4,7 @@ import {
   ArrowRight,
   BookOpen,
   Check,
+  Copy,
   ChevronLeft,
   ChevronDown,
   ChevronRight,
@@ -762,12 +763,6 @@ export default function App() {
                     </button>
                   </li>
                   <li class={sidebarCollapsed ? '' : 'pl-4'}>
-                    <button class={`${activePage === 'api' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(projectApiPath(selectedProjectId))} title="API" aria-label="API">
-                      <SquarePen size={16} />
-                      {!sidebarCollapsed && <span>API</span>}
-                    </button>
-                  </li>
-                  <li class={sidebarCollapsed ? '' : 'pl-4'}>
                     <button class={`${activePage === 'bugs' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(projectBugsPath(selectedProjectId))} title="Bugs" aria-label="Bugs">
                       <Bug size={16} />
                       {!sidebarCollapsed && <span>Bugs</span>}
@@ -790,6 +785,18 @@ export default function App() {
                 </li>
               )}
             </ul>
+            {selectedProjectId && (
+              <div class={`mt-3 border-t border-base-300/70 pt-3 ${sidebarCollapsed ? 'w-full' : ''}`}>
+                <ul class={`menu rounded-box bg-base-100/75 p-2 ${sidebarCollapsed ? 'items-center' : ''}`}>
+                  <li>
+                    <button class={`${activePage === 'api' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(projectApiPath(selectedProjectId))} title="API" aria-label="API">
+                      <SquarePen size={16} />
+                      {!sidebarCollapsed && <span>API</span>}
+                    </button>
+                  </li>
+                </ul>
+              </div>
+            )}
           </nav>
 
           <div class={`mt-auto rounded-xl border border-base-300 bg-base-100 p-3 ${sidebarCollapsed ? 'w-full max-w-[56px]' : ''}`}>
@@ -922,7 +929,7 @@ export default function App() {
               {route.view === 'api' && (
                 <>
                   <ProjectHero project={tree.project} tags={tree.tags} onEdit={() => navigate(projectSettingsPath(tree.project.id))} onAddPrimary={() => openNewUnit(tree.project.id)} addLabel="Add epic" addTitle="Add epic" />
-                  <ApiDocsPage projectId={tree.project.id} />
+                  <ApiDocsPage project={tree.project} projects={projects} units={units} />
                 </>
               )}
 
@@ -2212,54 +2219,237 @@ function countBacklogNodes(nodes: BacklogDisplayNode[]): number {
   return nodes.reduce((total, node) => total + 1 + countBacklogNodes(node.children), 0)
 }
 
-function ApiDocsPage(props: { projectId: string }) {
+function ApiDocsPage(props: { project: Project; projects: Project[]; units: Unit[] }) {
   const base = '/api/agilerr'
+  const [selectedProjectId, setSelectedProjectId] = useState(props.project.id)
+  const [selectedUnitId, setSelectedUnitId] = useState(props.units[0]?.id || '')
+  const [expandedKey, setExpandedKey] = useState<string | null>(null)
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  const selectedProject = props.projects.find((project) => project.id === selectedProjectId) || props.project
+  const selectedUnit = props.units.find((unit) => unit.id === selectedUnitId) || props.units[0] || null
+
+  useEffect(() => {
+    setSelectedProjectId(props.project.id)
+  }, [props.project.id])
+
+  useEffect(() => {
+    if (!props.units.some((unit) => unit.id === selectedUnitId)) {
+      setSelectedUnitId(props.units[0]?.id || '')
+    }
+  }, [props.units, selectedUnitId])
+
+  const endpoints = [
+    {
+      key: 'me',
+      method: 'GET',
+      path: `${base}/me`,
+      description: 'Return the authenticated user profile used by the app shell.',
+      curl: `curl -X GET ${base}/me \\\n  -H "Authorization: <pb_auth_token>"`,
+    },
+    {
+      key: 'projects-list',
+      method: 'GET',
+      path: `${base}/projects`,
+      description: 'List projects visible to the authenticated user.',
+      curl: `curl -X GET ${base}/projects \\\n  -H "Authorization: <pb_auth_token>"`,
+    },
+    {
+      key: 'projects-create',
+      method: 'POST',
+      path: `${base}/projects`,
+      description: 'Create a project with name, description, color, and tags.',
+      curl: `curl -X POST ${base}/projects \\\n  -H "Authorization: <pb_auth_token>" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "name": "Platform refresh",\n    "description": "Main delivery project",\n    "color": "#2563eb",\n    "tags": ["platform", "delivery"]\n  }'`,
+    },
+    {
+      key: 'project-update',
+      method: 'PATCH',
+      path: `${base}/projects/${selectedProject.id}`,
+      description: 'Update the selected project metadata and color settings.',
+      variables: [{ label: 'Project', type: 'project' as const }],
+      curl: `curl -X PATCH ${base}/projects/${selectedProject.id} \\\n  -H "Authorization: <pb_auth_token>" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "name": "${selectedProject.name}",\n    "description": "${escapeJson(selectedProject.description || 'Updated project description')}"\n  }'`,
+    },
+    {
+      key: 'project-tree',
+      method: 'GET',
+      path: `${base}/projects/${selectedProject.id}`,
+      description: 'Fetch the selected project, items, comments, users, and tag suggestions in a single response.',
+      variables: [{ label: 'Project', type: 'project' as const }],
+      curl: `curl -X GET ${base}/projects/${selectedProject.id} \\\n  -H "Authorization: <pb_auth_token>"`,
+    },
+    {
+      key: 'project-suggest',
+      method: 'GET',
+      path: `${base}/projects/${selectedProject.id}/suggest?q=backlog`,
+      description: 'Return tag, user, and item suggestions for mentions and tagging.',
+      variables: [{ label: 'Project', type: 'project' as const }],
+      curl: `curl -X GET "${base}/projects/${selectedProject.id}/suggest?q=backlog" \\\n  -H "Authorization: <pb_auth_token>"`,
+    },
+    {
+      key: 'units-create',
+      method: 'POST',
+      path: `${base}/projects/${selectedProject.id}/units`,
+      description: 'Create a new item under the selected project.',
+      variables: [{ label: 'Project', type: 'project' as const }],
+      curl: `curl -X POST ${base}/projects/${selectedProject.id}/units \\\n  -H "Authorization: <pb_auth_token>" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "type": "epic",\n    "status": "todo",\n    "title": "Ship onboarding",\n    "description": "Create the onboarding experience",\n    "tags": ["onboarding", "mvp"]\n  }'`,
+    },
+    {
+      key: 'units-update',
+      method: 'PATCH',
+      path: `${base}/units/${selectedUnit?.id || '[select-item]'}`,
+      description: 'Edit the selected item.',
+      variables: [{ label: 'Item', type: 'unit' as const }],
+      curl: `curl -X PATCH ${base}/units/${selectedUnit?.id || '<unit_id>'} \\\n  -H "Authorization: <pb_auth_token>" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "title": "${escapeJson(selectedUnit?.title || 'Updated title')}",\n    "status": "${selectedUnit?.status || 'todo'}"\n  }'`,
+    },
+    {
+      key: 'units-move',
+      method: 'POST',
+      path: `${base}/units/${selectedUnit?.id || '[select-item]'}/move`,
+      description: 'Move the selected item between kanban lanes using a status body.',
+      variables: [{ label: 'Item', type: 'unit' as const }],
+      curl: `curl -X POST ${base}/units/${selectedUnit?.id || '<unit_id>'}/move \\\n  -H "Authorization: <pb_auth_token>" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "status": "in_progress"\n  }'`,
+    },
+    {
+      key: 'units-delete',
+      method: 'DELETE',
+      path: `${base}/units/${selectedUnit?.id || '[select-item]'}`,
+      description: 'Delete the selected item after its child items are removed.',
+      variables: [{ label: 'Item', type: 'unit' as const }],
+      curl: `curl -X DELETE ${base}/units/${selectedUnit?.id || '<unit_id>'} \\\n  -H "Authorization: <pb_auth_token>"`,
+    },
+    {
+      key: 'comments-list',
+      method: 'GET',
+      path: `${base}/units/${selectedUnit?.id || '[select-item]'}/comments`,
+      description: 'List comments for the selected item.',
+      variables: [{ label: 'Item', type: 'unit' as const }],
+      curl: `curl -X GET ${base}/units/${selectedUnit?.id || '<unit_id>'}/comments \\\n  -H "Authorization: <pb_auth_token>"`,
+    },
+    {
+      key: 'comments-create',
+      method: 'POST',
+      path: `${base}/units/${selectedUnit?.id || '[select-item]'}/comments`,
+      description: 'Create a markdown comment with optional mentions.',
+      variables: [{ label: 'Item', type: 'unit' as const }],
+      curl: `curl -X POST ${base}/units/${selectedUnit?.id || '<unit_id>'}/comments \\\n  -H "Authorization: <pb_auth_token>" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "body": "Looks good from API docs."\n  }'`,
+    },
+    {
+      key: 'smart-add',
+      method: 'POST',
+      path: `${base}/smart-add`,
+      description: 'Refine a draft item using the configured OpenAI endpoint.',
+      curl: `curl -X POST ${base}/smart-add \\\n  -H "Authorization: <pb_auth_token>" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "unitType": "story",\n    "title": "Tighten login flow",\n    "description": "Make the login flow clearer for new users",\n    "messages": []\n  }'`,
+    },
+  ]
+
+  async function handleCopy(endpointKey: string, curl: string) {
+    setExpandedKey(endpointKey)
+    try {
+      await navigator.clipboard.writeText(curl)
+      setCopiedKey(endpointKey)
+      window.setTimeout(() => setCopiedKey((current) => (current === endpointKey ? null : current)), 1600)
+    } catch {
+      setCopiedKey(null)
+    }
+  }
+
   return (
     <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
       <h2 class="text-lg font-bold">API Usage</h2>
-      <p class="mt-2 text-sm text-base-content/82">All endpoints below require the PocketBase auth token in the `Authorization` header.</p>
+      <p class="mt-2 text-sm text-base-content/82">All endpoints below require the PocketBase auth token in the `Authorization` header. Variable segments use the dropdowns shown on each endpoint.</p>
       <div class="mt-6 space-y-4">
-        <ApiEndpoint method="GET" path={`${base}/me`} description="Return the authenticated user profile used by the app shell." />
-        <ApiEndpoint method="GET" path={`${base}/projects`} description="List projects visible to the authenticated user." />
-        <ApiEndpoint method="POST" path={`${base}/projects`} description="Create a project with `name`, `description`, `color`, and `tags`." />
-        <ApiEndpoint method="PATCH" path={`${base}/projects/${props.projectId}`} description="Update the active project's metadata." />
-        <ApiEndpoint method="GET" path={`${base}/projects/${props.projectId}`} description="Fetch the project, items, comments, users, and tag suggestions in a single response." />
-        <ApiEndpoint method="GET" path={`${base}/projects/${props.projectId}/suggest?q=term`} description="Return tag, user, and item suggestions for mentions and tagging." />
-        <ApiEndpoint method="POST" path={`${base}/projects/${props.projectId}/units`} description="Create a new item under the project." />
-        <ApiEndpoint method="PATCH" path={`${base}/units/{unitId}`} description="Edit an existing item." />
-        <ApiEndpoint method="POST" path={`${base}/units/{unitId}/move`} description="Move an item between kanban lanes using `{ status }`." />
-        <ApiEndpoint method="DELETE" path={`${base}/units/{unitId}`} description="Delete an item after its child items are removed." />
-        <ApiEndpoint method="GET" path={`${base}/units/{unitId}/comments`} description="List comments for an item." />
-        <ApiEndpoint method="POST" path={`${base}/units/{unitId}/comments`} description="Create a markdown comment with optional mentions." />
-        <ApiEndpoint method="POST" path={`${base}/smart-add`} description="Refine a draft item using the configured OpenAI endpoint." />
-      </div>
-
-      <div class="mt-6 rounded-xl border border-base-300 bg-base-200/60 p-4">
-        <h3 class="font-semibold">Example Request</h3>
-        <pre class="mt-3 overflow-auto rounded-xl bg-neutral p-4 text-xs text-neutral-content"><code>{`curl -X POST ${base}/projects/${props.projectId}/units \\
-  -H "Authorization: <pb_auth_token>" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "type": "epic",
-    "status": "todo",
-    "title": "Ship onboarding",
-    "description": "Create the onboarding experience",
-    "color": "#2563eb",
-    "tags": ["onboarding", "mvp"]
-  }'`}</code></pre>
+        {endpoints.map((endpoint) => (
+          <ApiEndpointCard
+            key={endpoint.key}
+            endpoint={endpoint}
+            copied={copiedKey === endpoint.key}
+            expanded={expandedKey === endpoint.key}
+            projects={props.projects}
+            selectedProjectId={selectedProjectId}
+            onProjectChange={setSelectedProjectId}
+            units={props.units}
+            selectedUnitId={selectedUnitId}
+            onUnitChange={setSelectedUnitId}
+            onCopy={handleCopy}
+          />
+        ))}
       </div>
     </section>
   )
 }
 
-function ApiEndpoint(props: { method: string; path: string; description: string }) {
+function ApiEndpointCard(props: {
+  endpoint: {
+    key: string
+    method: string
+    path: string
+    description: string
+    curl: string
+    variables?: Array<{ label: string; type: 'project' | 'unit' }>
+  }
+  projects: Project[]
+  selectedProjectId: string
+  onProjectChange: (projectId: string) => void
+  units: Unit[]
+  selectedUnitId: string
+  onUnitChange: (unitId: string) => void
+  copied: boolean
+  expanded: boolean
+  onCopy: (endpointKey: string, curl: string) => void
+}) {
   return (
-    <div class="rounded-xl border border-base-300 bg-base-100 p-3">
-      <div class="flex flex-wrap items-center gap-3">
-        <span class="badge badge-primary">{props.method}</span>
-        <code class="rounded bg-base-200 px-2 py-1 text-sm">{props.path}</code>
+    <div class="overflow-hidden rounded-xl border border-base-300 bg-base-100">
+      <div class="p-4">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-3">
+              <span class="badge badge-primary">{props.endpoint.method}</span>
+              <code class="rounded bg-base-200 px-2 py-1 text-sm break-all">{props.endpoint.path}</code>
+            </div>
+            <p class="mt-2 text-xs text-base-content/82">{props.endpoint.description}</p>
+          </div>
+          <button class="btn btn-outline btn-xs gap-2" onClick={() => void props.onCopy(props.endpoint.key, props.endpoint.curl)}>
+            <Copy size={14} />
+            {props.copied ? 'Copied' : 'Copy curl'}
+          </button>
+        </div>
+        {!!props.endpoint.variables?.length && (
+          <div class="mt-3 grid gap-3 md:grid-cols-2">
+            {props.endpoint.variables.map((variable) =>
+              variable.type === 'project' ? (
+                <label class="form-control gap-1" key={variable.label}>
+                  <span class="text-xs font-medium text-base-content/75">{variable.label}</span>
+                  <select class="select select-bordered select-sm w-full" value={props.selectedProjectId} onChange={(event) => props.onProjectChange((event.currentTarget as HTMLSelectElement).value)}>
+                    {props.projects.map((project) => (
+                      <option value={project.id}>
+                        {project.name} - {project.id}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <label class="form-control gap-1" key={variable.label}>
+                  <span class="text-xs font-medium text-base-content/75">{variable.label}</span>
+                  <select class="select select-bordered select-sm w-full" value={props.selectedUnitId} onChange={(event) => props.onUnitChange((event.currentTarget as HTMLSelectElement).value)}>
+                    {!props.units.length && <option value="">No items loaded</option>}
+                    {props.units.map((unit) => (
+                      <option value={unit.id}>
+                        {typeLabels[unit.type]}: {unit.title} - {unit.id}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ),
+            )}
+          </div>
+        )}
       </div>
-      <p class="mt-2 text-xs text-base-content/82">{props.description}</p>
+      <div class={`grid transition-all duration-300 ${props.expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
+        <div class="overflow-hidden">
+          <div class="border-t border-base-300 bg-base-200/60 p-4">
+            <pre class="overflow-auto rounded-xl bg-neutral p-4 text-xs text-neutral-content"><code>{props.endpoint.curl}</code></pre>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -2434,6 +2624,10 @@ function buildUnitPath(projectId: string, unitById: Record<string, Unit>, unitId
 
 function plainText(markdown: string) {
   return markdown.replace(/[#_*`\[\]\(\)!>-]/g, '').replace(/\s+/g, ' ').trim()
+}
+
+function escapeJson(value: string) {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')
 }
 
 function gravatar(email: string) {
