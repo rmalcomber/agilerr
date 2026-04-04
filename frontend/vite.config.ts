@@ -5,6 +5,10 @@ import preact from '@preact/preset-vite'
 export default defineConfig({
   plugins: [preact()],
   server: {
+    watch: {
+      usePolling: true,
+      interval: 150,
+    },
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:5040',

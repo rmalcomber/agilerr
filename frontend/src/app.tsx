@@ -33,6 +33,13 @@ const typeLabels: Record<UnitType, string> = {
   task: 'Task',
 }
 
+const pluralSegments: Record<UnitType, string> = {
+  epic: 'epics',
+  feature: 'features',
+  story: 'stories',
+  task: 'tasks',
+}
+
 const nextChildType: Record<UnitType, UnitType | null> = {
   epic: 'feature',
   feature: 'story',
@@ -61,6 +68,25 @@ type UnitDraft = {
   tags: string[]
 }
 
+type AppRoute =
+  | { kind: 'root' }
+  | {
+      kind: 'project'
+      projectId: string
+      view: ProjectPage
+      chain: string[]
+      taskId?: string
+      invalid?: boolean
+    }
+
+type RouteContext = {
+  projectId: string
+  currentUnit: Unit | null
+  chainUnits: Unit[]
+  taskUnit: Unit | null
+  invalid: boolean
+}
+
 const emptyProjectDraft = {
   name: '',
   description: '',
@@ -71,9 +97,8 @@ const emptyProjectDraft = {
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
-  const [currentPage, setCurrentPage] = useState<ProjectPage>('backlog')
   const [tree, setTree] = useState<ProjectTree | null>(null)
+  const [route, setRoute] = useState<AppRoute>(() => parseRoute(window.location.pathname))
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
@@ -83,7 +108,7 @@ export default function App() {
   const [projectEditorOpen, setProjectEditorOpen] = useState(false)
   const [projectEditor, setProjectEditor] = useState(emptyProjectDraft)
   const [unitEditor, setUnitEditor] = useState<UnitDraft | null>(null)
-  const [activeUnitId, setActiveUnitId] = useState<string | null>(null)
+  const [detailUnitId, setDetailUnitId] = useState<string | null>(null)
   const [commentBody, setCommentBody] = useState('')
   const [commentMentions, setCommentMentions] = useState<Mention[]>([])
   const [suggestions, setSuggestions] = useState<Suggestions>({ units: [], users: [], tags: [] })
@@ -98,11 +123,21 @@ export default function App() {
     const unsubscribe = pb.authStore.onChange(() => {
       void loadSession()
     })
-    return unsubscribe
+    const handlePopState = () => setRoute(parseRoute(window.location.pathname))
+    window.addEventListener('popstate', handlePopState)
+    return () => {
+      unsubscribe()
+      window.removeEventListener('popstate', handlePopState)
+    }
   }, [])
 
+  const selectedProjectId = route.kind === 'project' ? route.projectId : null
+
   useEffect(() => {
-    if (!selectedProjectId || !currentUser) return
+    if (!selectedProjectId || !currentUser) {
+      setTree(null)
+      return
+    }
     void loadProject(selectedProjectId)
     void loadSuggestions(selectedProjectId)
   }, [selectedProjectId, currentUser])
@@ -110,8 +145,9 @@ export default function App() {
   const units = tree?.units ?? []
   const comments = tree?.comments ?? []
   const users = tree?.users ?? []
-  const unitById = useMemo(() => Object.fromEntries(units.map((unit) => [unit.id, unit])), [units])
-  const userById = useMemo(() => Object.fromEntries(users.map((user) => [user.id, user])), [users])
+  const selectedProject = tree?.project.id === selectedProjectId ? tree.project : projects.find((project) => project.id === selectedProjectId) || null
+  const unitById = useMemo<Record<string, Unit>>(() => Object.fromEntries(units.map((unit) => [unit.id, unit])), [units])
+  const userById = useMemo<Record<string, User>>(() => Object.fromEntries(users.map((user) => [user.id, user])), [users])
   const commentsByUnit = useMemo(() => {
     const map = new Map<string, Comment[]>()
     for (const comment of comments) {
@@ -134,7 +170,22 @@ export default function App() {
     }
     return map
   }, [units])
-  const activeUnit = activeUnitId ? unitById[activeUnitId] : null
+  const routeContext = useMemo<RouteContext | null>(() => {
+    if (route.kind !== 'project') return null
+    return resolveRouteContext(route, unitById)
+  }, [route, unitById])
+
+  const modalUnit = useMemo(() => {
+    if (!tree) return null
+    if (detailUnitId && unitById[detailUnitId]) return unitById[detailUnitId]
+    if (route.kind === 'project' && route.taskId && unitById[route.taskId]) return unitById[route.taskId]
+    return null
+  }, [detailUnitId, route, tree, unitById])
+
+  useEffect(() => {
+    setCommentBody('')
+    setCommentMentions([])
+  }, [modalUnit?.id, routeContext?.currentUnit?.id])
 
   async function loadSession() {
     setLoading(true)
@@ -143,7 +194,6 @@ export default function App() {
       if (!pb.authStore.isValid) {
         setCurrentUser(null)
         setProjects([])
-        setSelectedProjectId(null)
         setTree(null)
         return
       }
@@ -153,12 +203,6 @@ export default function App() {
 
       const response = await api.projects()
       setProjects(response.projects)
-      setSelectedProjectId((current) => {
-        if (current && response.projects.some((project) => project.id === current)) {
-          return current
-        }
-        return response.projects[0]?.id || null
-      })
     } catch (err) {
       pb.authStore.clear()
       setCurrentUser(null)
@@ -192,6 +236,17 @@ export default function App() {
     }
   }
 
+  function navigate(nextPath: string, replace = false) {
+    const current = window.location.pathname || '/'
+    if (current === nextPath) {
+      setRoute(parseRoute(nextPath))
+      return
+    }
+    const method = replace ? 'replaceState' : 'pushState'
+    window.history[method](null, '', nextPath)
+    setRoute(parseRoute(nextPath))
+  }
+
   async function handleAuthSubmit(event: Event) {
     event.preventDefault()
     setError('')
@@ -206,6 +261,7 @@ export default function App() {
       }
       await pb.collection('users').authWithPassword(authForm.email.trim(), authForm.password)
       setAuthForm({ email: '', password: '', name: '' })
+      navigate('/')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Authentication failed')
     }
@@ -219,7 +275,7 @@ export default function App() {
       setProjects(next)
       setProjectModalOpen(false)
       setProjectDraft(emptyProjectDraft)
-      setSelectedProjectId(response.project.id)
+      navigate(projectKanbanPath(response.project.id))
       await loadProject(response.project.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create project')
@@ -248,8 +304,15 @@ export default function App() {
       } else {
         await api.createUnit(unitEditor.projectId, unitEditor)
       }
+      const projectId = unitEditor.projectId
       setUnitEditor(null)
-      if (selectedProjectId) await loadProject(selectedProjectId)
+      const nextTree = await api.projectTree(projectId)
+      setTree(nextTree)
+      if (unitEditor.id && route.kind === 'project') {
+        if (route.taskId === unitEditor.id || route.chain.includes(unitEditor.id) || detailUnitId === unitEditor.id) {
+          navigate(buildUnitPath(projectId, Object.fromEntries(nextTree.units.map((unit) => [unit.id, unit])), unitEditor.id), true)
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save unit')
     }
@@ -267,20 +330,24 @@ export default function App() {
   async function deleteUnit(unitId: string) {
     if (!window.confirm('Delete this unit? Child units must already be removed.')) return
     try {
+      const unit = unitById[unitId]
       await api.deleteUnit(unitId)
-      setActiveUnitId(null)
+      setDetailUnitId(null)
       setUnitEditor(null)
+      if (unit) {
+        const fallback = unit.parentId ? buildUnitPath(unit.projectId, unitById, unit.parentId) : projectKanbanPath(unit.projectId)
+        navigate(fallback, true)
+      }
       if (selectedProjectId) await loadProject(selectedProjectId)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete unit')
     }
   }
 
-  async function saveComment(event: Event) {
+  async function saveComment(event: Event, unitId: string) {
     event.preventDefault()
-    if (!activeUnit) return
     try {
-      await api.createComment(activeUnit.id, {
+      await api.createComment(unitId, {
         body: commentBody,
         mentions: commentMentions,
       })
@@ -321,6 +388,26 @@ export default function App() {
       tags: [...unit.tags],
     })
     resetSmartAdd()
+  }
+
+  function openUnitDetails(unit: Unit) {
+    setDetailUnitId(unit.id)
+  }
+
+  function closeUnitDetails() {
+    if (route.kind === 'project' && route.taskId) {
+      navigate(taskParentPath(route), true)
+      return
+    }
+    setDetailUnitId(null)
+  }
+
+  function openUnitRoute(unit: Unit) {
+    if (unit.type === 'task') {
+      navigate(buildUnitPath(unit.projectId, unitById, unit.id))
+      return
+    }
+    navigate(buildUnitPath(unit.projectId, unitById, unit.id))
   }
 
   function resetSmartAdd() {
@@ -393,7 +480,7 @@ export default function App() {
             </p>
             <div class="mt-7 grid gap-3 sm:grid-cols-3">
               <ValueCard title="Strict hierarchy" body="Project -> Epic -> Feature -> User Story -> Task." />
-              <ValueCard title="Board and backlog" body="Separate backlog and kanban pages, with a lightweight API guide in-app." />
+              <ValueCard title="Context routing" body="Drill from project epics down to tasks with real project URLs and breadcrumbs." />
               <ValueCard title="Smart Add" body="Use your OpenAI key to clean up items and ask for missing clarity." />
             </div>
           </section>
@@ -437,41 +524,71 @@ export default function App() {
     )
   }
 
+  const activePage = route.kind === 'project' ? route.view : null
+  const projectRouteInvalid = route.kind === 'project' && route.view === 'kanban' && routeContext?.invalid
+
   return (
     <div class="min-h-screen bg-[radial-gradient(circle_at_top,#1e293b,transparent_20%),linear-gradient(180deg,#0f172a_0%,#111827_100%)] text-base-content">
-      <div class="grid min-h-screen lg:grid-cols-[240px,1fr]">
+      <div class="grid min-h-screen lg:grid-cols-[260px,1fr]">
         <aside class="border-r border-base-300/50 bg-base-100/75 p-4 backdrop-blur">
-          <div class="flex items-start justify-between gap-3">
-            <div>
+          <div>
+            <button class="text-left" onClick={() => navigate('/')}>
               <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">Agilerr</p>
-              <h2 class="mt-1.5 text-xl font-black">Projects</h2>
-            </div>
-            <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={() => setProjectModalOpen(true)}>
-              New
+              <h1 class="mt-1.5 text-xl font-black">Workspace</h1>
             </button>
           </div>
 
-          <div class="mt-5 space-y-2">
-            {projects.map((project) => (
-              <button
-                key={project.id}
-                class={`w-full rounded-xl border px-3 py-2.5 text-left transition ${
-                  selectedProjectId === project.id ? 'border-primary bg-primary/10' : 'border-base-300 bg-base-100 hover:border-primary/50'
-                }`}
-                onClick={() => {
-                  setSelectedProjectId(project.id)
-                  setCurrentPage('backlog')
-                }}
-              >
-                <div class="flex items-center gap-3">
-                  <span class="h-3 w-3 rounded-full" style={{ backgroundColor: project.color }} />
-                  <span class="font-semibold text-sm">{project.name}</span>
-                </div>
-                <p class="mt-1.5 line-clamp-2 text-xs text-base-content/85">{project.description || 'No description yet.'}</p>
-              </button>
-            ))}
-            {!projects.length && <div class="rounded-xl border border-dashed border-base-300 bg-base-100 p-3 text-xs text-base-content/80">Create the first project to start.</div>}
+          <div class="mt-5">
+            <details class="dropdown w-full">
+              <summary class="btn btn-outline btn-sm h-10 min-h-10 w-full justify-between">
+                <span class="truncate">{selectedProject?.name || 'Select a project'}</span>
+                <span class="text-xs text-base-content/70">{projects.length} total</span>
+              </summary>
+              <ul class="menu dropdown-content z-20 mt-2 w-full rounded-box border border-base-300 bg-base-100 p-2 shadow">
+                {projects.map((project) => (
+                  <li key={project.id}>
+                    <button
+                      class={selectedProjectId === project.id ? 'active' : ''}
+                      onClick={() => navigate(projectPathForSelection(project.id, activePage))}
+                    >
+                      <span class="inline-flex items-center gap-2">
+                        <span class="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: project.color }} />
+                        <span>{project.name}</span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+                <li class="mt-1 border-t border-base-300 pt-1">
+                  <button onClick={() => setProjectModalOpen(true)}>Create new project</button>
+                </li>
+              </ul>
+            </details>
           </div>
+
+          <nav class="mt-5">
+            <ul class="menu rounded-box bg-base-100/75 p-2">
+              <li>
+                <button class={route.kind === 'root' ? 'active' : ''} onClick={() => navigate('/')}>
+                  Projects
+                </button>
+              </li>
+              <li>
+                <button class={activePage === 'kanban' ? 'active' : ''} disabled={!selectedProjectId} onClick={() => selectedProjectId && navigate(projectKanbanPath(selectedProjectId))}>
+                  Kanban
+                </button>
+              </li>
+              <li>
+                <button class={activePage === 'backlog' ? 'active' : ''} disabled={!selectedProjectId} onClick={() => selectedProjectId && navigate(projectBacklogPath(selectedProjectId))}>
+                  Backlog
+                </button>
+              </li>
+              <li>
+                <button class={activePage === 'api' ? 'active' : ''} disabled={!selectedProjectId} onClick={() => selectedProjectId && navigate(projectApiPath(selectedProjectId))}>
+                  API
+                </button>
+              </li>
+            </ul>
+          </nav>
 
           <div class="mt-6 rounded-xl border border-base-300 bg-base-100 p-3">
             <div class="flex items-center gap-3">
@@ -489,126 +606,91 @@ export default function App() {
 
         <main class="p-4 sm:p-5">
           {error && <div class="alert alert-error mb-4">{error}</div>}
-          {tree ? (
+
+          {route.kind === 'root' && (
+            <ProjectDirectory
+              projects={projects}
+              onCreate={() => setProjectModalOpen(true)}
+              onOpen={(projectId) => navigate(projectKanbanPath(projectId))}
+            />
+          )}
+
+          {route.kind === 'project' && !tree && <div class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-6 shadow-panel">Loading project…</div>}
+
+          {route.kind === 'project' && tree && (
             <>
-              <header class="mb-5 rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
-                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <div class="flex items-center gap-3">
-                      <span class="h-4 w-4 rounded-full" style={{ backgroundColor: tree.project.color }} />
-                      <h1 class="text-2xl font-black">{tree.project.name}</h1>
+              {route.view === 'backlog' && (
+                <>
+                  <ProjectHero project={tree.project} tags={tree.tags} onEdit={() => setProjectEditorOpen(true)} onAddEpic={() => openNewUnit(tree.project.id)} />
+                  <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-4 shadow-panel">
+                    <div class="mb-4 flex items-center justify-between">
+                      <h2 class="text-lg font-bold">Backlog</h2>
+                      <span class="text-xs text-base-content/75">{units.length} units</span>
                     </div>
-                    <p class="mt-2.5 max-w-3xl text-sm text-base-content/90">{tree.project.description || 'No project description yet.'}</p>
-                    <div class="mt-3 flex flex-wrap gap-2">
-                      {tree.tags.map((tag) => (
-                        <span class="badge badge-outline border-base-content/40 text-base-content" key={tag}>
-                          {tag}
-                        </span>
+                    <div class="space-y-3">
+                      {(treeByParent.get('root') || []).map((unit) => (
+                        <UnitTreeNode
+                          key={unit.id}
+                          unit={unit}
+                          treeByParent={treeByParent}
+                          commentsByUnit={commentsByUnit}
+                          onOpenRoute={openUnitRoute}
+                          onOpenDetails={openUnitDetails}
+                          onEdit={openEditUnit}
+                          onCreateChild={(target) => openNewUnit(tree.project.id, target)}
+                        />
                       ))}
+                      {!units.length && <div class="rounded-xl border border-dashed border-base-300 p-3 text-xs text-base-content/80">No units yet. Start with an Epic.</div>}
                     </div>
-                  </div>
-                  <div class="flex flex-wrap gap-2">
-                    <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={() => setProjectEditorOpen(true)}>
-                      Edit Project
-                    </button>
-                    <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={() => openNewUnit(tree.project.id)}>
-                      Add Epic
-                    </button>
-                  </div>
-                </div>
-
-                <div class="mt-5 tabs tabs-boxed inline-flex">
-                  <button class={`tab ${currentPage === 'backlog' ? 'tab-active' : ''}`} onClick={() => setCurrentPage('backlog')}>
-                    Backlog
-                  </button>
-                  <button class={`tab ${currentPage === 'kanban' ? 'tab-active' : ''}`} onClick={() => setCurrentPage('kanban')}>
-                    Kanban
-                  </button>
-                  <button class={`tab ${currentPage === 'api' ? 'tab-active' : ''}`} onClick={() => setCurrentPage('api')}>
-                    API
-                  </button>
-                </div>
-              </header>
-
-              {currentPage === 'backlog' && (
-                <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-4 shadow-panel">
-                  <div class="mb-4 flex items-center justify-between">
-                    <h2 class="text-lg font-bold">Backlog</h2>
-                    <span class="text-xs text-base-content/75">{units.length} units</span>
-                  </div>
-                  <div class="space-y-3">
-                    {(treeByParent.get('root') || []).map((unit) => (
-                      <UnitTreeNode
-                        key={unit.id}
-                        unit={unit}
-                        treeByParent={treeByParent}
-                        commentsByUnit={commentsByUnit}
-                        onOpen={(target) => setActiveUnitId(target.id)}
-                        onEdit={openEditUnit}
-                        onCreateChild={(target) => openNewUnit(tree.project.id, target)}
-                      />
-                    ))}
-                    {!units.length && <div class="rounded-xl border border-dashed border-base-300 p-3 text-xs text-base-content/80">No units yet. Start with an Epic.</div>}
-                  </div>
-                </section>
+                  </section>
+                </>
               )}
 
-              {currentPage === 'kanban' && (
-                <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-4 shadow-panel">
-                  <div class="mb-4 flex items-center justify-between">
-                    <h2 class="text-lg font-bold">Kanban</h2>
-                    <span class="text-xs text-base-content/75">Drag cards between lanes</span>
-                  </div>
-                  <div class="grid gap-4 xl:grid-cols-4">
-                    {statuses.map((status) => {
-                      const laneUnits = units
-                        .filter((unit) => unit.status === status.key)
-                        .sort((a, b) => a.position - b.position || a.title.localeCompare(b.title))
-
-                      return (
-                        <div
-                          key={status.key}
-                          class="rounded-xl border border-base-300 bg-base-200/60 p-2.5"
-                          onDragOver={(event) => event.preventDefault()}
-                          onDrop={(event) => {
-                            event.preventDefault()
-                            const unitId = event.dataTransfer?.getData('text/unit-id')
-                            if (unitId) void moveUnit(unitId, status.key)
-                          }}
-                        >
-                          <div class="mb-3 flex items-center justify-between">
-                            <span class="font-semibold">{status.label}</span>
-                            <span class="badge">{laneUnits.length}</span>
-                          </div>
-                          <div class="space-y-3">
-                            {laneUnits.map((unit) => (
-                              <button
-                                key={unit.id}
-                                draggable
-                                class="block w-full rounded-xl border border-base-300 bg-base-100 p-2.5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/50"
-                                onDragStart={(event) => event.dataTransfer?.setData('text/unit-id', unit.id)}
-                                onClick={() => setActiveUnitId(unit.id)}
-                              >
-                                <div class="flex items-center gap-2 text-xs uppercase tracking-wide text-base-content/70">
-                                  <span class="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: unit.color }} />
-                                  <span>{typeLabels[unit.type]}</span>
-                                </div>
-                                <div class="mt-1.5 text-sm font-semibold">{unit.title}</div>
-                                <div class="mt-1.5 line-clamp-3 text-xs text-base-content/90">{plainText(unit.description) || 'No description yet.'}</div>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </section>
+              {route.view === 'api' && (
+                <>
+                  <ProjectHero project={tree.project} tags={tree.tags} onEdit={() => setProjectEditorOpen(true)} onAddEpic={() => openNewUnit(tree.project.id)} />
+                  <ApiDocsPage projectId={tree.project.id} />
+                </>
               )}
 
-              {currentPage === 'api' && <ApiDocsPage projectId={tree.project.id} />}
+              {route.view === 'kanban' && (
+                <>
+                  {projectRouteInvalid ? (
+                    <div class="rounded-[1.5rem] border border-warning/30 bg-base-100/90 p-6 shadow-panel">
+                      <h2 class="text-lg font-bold">Unit path not found</h2>
+                      <p class="mt-2 text-sm text-base-content/85">This link does not match the current project hierarchy.</p>
+                      <button class="btn btn-primary btn-sm mt-4" onClick={() => navigate(projectKanbanPath(tree.project.id), true)}>
+                        Back to project board
+                      </button>
+                    </div>
+                  ) : (
+                    <KanbanRoutePage
+                      project={tree.project}
+                      allTags={tree.tags}
+                      routeContext={routeContext}
+                      treeByParent={treeByParent}
+                      commentsByUnit={commentsByUnit}
+                      userById={userById}
+                      unitById={unitById}
+                      onEditProject={() => setProjectEditorOpen(true)}
+                      onAddEpic={() => openNewUnit(tree.project.id)}
+                      onOpenRoute={openUnitRoute}
+                      onOpenDetails={openUnitDetails}
+                      onEditUnit={openEditUnit}
+                      onCreateChild={(unit) => openNewUnit(tree.project.id, unit)}
+                      onMoveUnit={(unitId, status) => void moveUnit(unitId, status)}
+                      onSaveComment={(event, unitId) => void saveComment(event, unitId)}
+                      commentBody={commentBody}
+                      commentMentions={commentMentions}
+                      onCommentBodyChange={setCommentBody}
+                      onInsertCommentMention={(mention) => insertMention('comment', mention)}
+                      suggestions={suggestions}
+                      navigate={navigate}
+                    />
+                  )}
+                </>
+              )}
             </>
-          ) : (
-            <div class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-6 shadow-panel">Select or create a project.</div>
           )}
         </main>
       </div>
@@ -677,9 +759,7 @@ export default function App() {
                     onChange={(e) => setUnitEditor({ ...unitEditor, type: (e.currentTarget as HTMLSelectElement).value as UnitType })}
                   >
                     {(['epic', 'feature', 'story', 'task'] as UnitType[]).map((type) => (
-                      <option key={type} value={type}>
-                        {typeLabels[type]}
-                      </option>
+                      <option value={type}>{typeLabels[type]}</option>
                     ))}
                   </select>
                 </Field>
@@ -700,9 +780,7 @@ export default function App() {
                 <Field label="Status">
                   <select class="select select-bordered w-full" value={unitEditor.status} onChange={(e) => setUnitEditor({ ...unitEditor, status: (e.currentTarget as HTMLSelectElement).value as UnitStatus })}>
                     {statuses.map((status) => (
-                      <option key={status.key} value={status.key}>
-                        {status.label}
-                      </option>
+                      <option value={status.key}>{status.label}</option>
                     ))}
                   </select>
                 </Field>
@@ -712,7 +790,7 @@ export default function App() {
                     {units
                       .filter((unit) => unit.id !== unitEditor.id)
                       .map((unit) => (
-                        <option key={unit.id} value={unit.id}>
+                        <option value={unit.id}>
                           {typeLabels[unit.type]}: {unit.title}
                         </option>
                       ))}
@@ -735,7 +813,7 @@ export default function App() {
                     <div class="space-y-3">
                       <div class="max-h-60 space-y-2 overflow-auto rounded-2xl bg-base-100 p-3">
                         {smartAddMessages.map((message, index) => (
-                          <div key={`${message.role}-${index}`} class={`chat ${message.role === 'user' ? 'chat-end' : 'chat-start'}`}>
+                          <div class={`chat ${message.role === 'user' ? 'chat-end' : 'chat-start'}`} key={`${message.role}-${index}`}>
                             <div class={`chat-bubble ${message.role === 'user' ? 'chat-bubble-primary' : ''}`}>{message.content}</div>
                           </div>
                         ))}
@@ -797,68 +875,353 @@ export default function App() {
         </Modal>
       )}
 
-      {activeUnit && (
-        <Modal title={activeUnit.title} onClose={() => setActiveUnitId(null)} wide>
-          <div class="space-y-5">
-            <div class="flex flex-wrap items-center gap-2">
-              <span class="badge badge-primary">{typeLabels[activeUnit.type]}</span>
-              <span class="badge badge-outline border-base-content/40 text-base-content">{statuses.find((status) => status.key === activeUnit.status)?.label}</span>
-              {activeUnit.tags.map((tag) => (
-                <span class="badge badge-outline border-base-content/40 text-base-content" key={tag}>
-                  {tag}
-                </span>
-              ))}
-            </div>
-
-            <div class="rounded-2xl border border-base-300 bg-base-100 p-4">
-              <Markdown source={activeUnit.description || '*No description yet.*'} />
-            </div>
-
-            <div class="flex flex-wrap gap-2">
-              <button class="btn btn-primary btn-sm" onClick={() => openEditUnit(activeUnit)}>
-                Edit unit
-              </button>
-              {nextChildType[activeUnit.type] && (
-                <button class="btn btn-outline btn-sm" onClick={() => openNewUnit(activeUnit.projectId, activeUnit)}>
-                  Add child
-                </button>
-              )}
-            </div>
-
-            <section>
-              <h3 class="mb-3 text-lg font-bold">Comments</h3>
-              <div class="space-y-3">
-                {(commentsByUnit.get(activeUnit.id) || []).map((comment) => (
-                  <article class="rounded-2xl border border-base-300 bg-base-100 p-4" key={comment.id}>
-                    <div class="mb-3 flex items-center gap-3">
-                      <img class="h-10 w-10 rounded-full" src={userById[comment.authorId]?.gravatar || gravatar(userById[comment.authorId]?.email || '')} alt={userById[comment.authorId]?.name || 'User'} />
-                      <div>
-                        <div class="font-semibold">{userById[comment.authorId]?.name || 'Unknown user'}</div>
-                        <div class="text-xs text-base-content/80">{new Date(comment.created).toLocaleString()}</div>
-                      </div>
-                    </div>
-                    <Markdown source={comment.body} />
-                  </article>
-                ))}
-                {!commentsByUnit.get(activeUnit.id)?.length && <div class="rounded-2xl border border-dashed border-base-300 p-4 text-sm text-base-content/80">No comments yet.</div>}
-              </div>
-            </section>
-
-            <form class="space-y-4 rounded-2xl border border-base-300 bg-base-200/60 p-4" onSubmit={saveComment}>
-              <Field label="Add comment">
-                <textarea class="textarea textarea-bordered min-h-28 w-full" value={commentBody} onInput={(e) => setCommentBody((e.currentTarget as HTMLTextAreaElement).value)} />
-              </Field>
-              <div class="grid gap-4 lg:grid-cols-2">
-                <MentionPanel title="Mention users" items={suggestions.users.map((item) => ({ id: item.id, label: item.label, type: 'user' as const }))} onPick={(mention) => insertMention('comment', mention)} />
-                <MentionPanel title="Mention units" items={suggestions.units.map((item) => ({ id: item.id, label: item.label, type: 'unit' as const }))} onPick={(mention) => insertMention('comment', mention)} />
-              </div>
-              <button class="btn btn-primary" type="submit">
-                Save comment
-              </button>
-            </form>
-          </div>
+      {modalUnit && (
+        <Modal title={modalUnit.title} onClose={closeUnitDetails} wide>
+          <UnitDetailContent
+            unit={modalUnit}
+            comments={commentsByUnit.get(modalUnit.id) || []}
+            userById={userById}
+            suggestions={suggestions}
+            commentBody={commentBody}
+            onCommentBodyChange={setCommentBody}
+            onInsertCommentMention={(mention) => insertMention('comment', mention)}
+            onSaveComment={(event) => void saveComment(event, modalUnit.id)}
+            onEdit={() => openEditUnit(modalUnit)}
+            onCreateChild={nextChildType[modalUnit.type] ? () => openNewUnit(modalUnit.projectId, modalUnit) : undefined}
+          />
         </Modal>
       )}
+    </div>
+  )
+}
+
+function ProjectDirectory(props: { projects: Project[]; onCreate: () => void; onOpen: (projectId: string) => void }) {
+  return (
+    <section class="space-y-5">
+      <header class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">Projects</p>
+            <h2 class="mt-2 text-2xl font-black">Choose a workspace</h2>
+            <p class="mt-2 max-w-2xl text-sm text-base-content/85">Select a project to jump into the kanban flow, or create a new one from here.</p>
+          </div>
+          <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={props.onCreate}>
+            Create project
+          </button>
+        </div>
+      </header>
+
+      <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {props.projects.map((project) => (
+          <button class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 text-left shadow-panel transition hover:-translate-y-0.5 hover:border-primary/50" onClick={() => props.onOpen(project.id)}>
+            <div class="flex items-center gap-3">
+              <span class="h-4 w-4 rounded-full" style={{ backgroundColor: project.color }} />
+              <h3 class="text-lg font-bold">{project.name}</h3>
+            </div>
+            <p class="mt-3 line-clamp-3 text-sm text-base-content/88">{project.description || 'No description yet.'}</p>
+            <div class="mt-4 flex flex-wrap gap-2">
+              {project.tags.length ? (
+                project.tags.slice(0, 6).map((tag) => (
+                  <span class="badge badge-outline border-base-content/40 text-base-content">{tag}</span>
+                ))
+              ) : (
+                <span class="text-xs text-base-content/80">No tags</span>
+              )}
+            </div>
+          </button>
+        ))}
+        {!props.projects.length && <div class="rounded-[1.5rem] border border-dashed border-base-300 bg-base-100/90 p-6 text-sm text-base-content/80">No projects yet.</div>}
+      </div>
+    </section>
+  )
+}
+
+function ProjectHero(props: { project: Project; tags: string[]; onEdit: () => void; onAddEpic: () => void }) {
+  return (
+    <header class="mb-5 rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+      <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div class="flex items-center gap-3">
+            <span class="h-4 w-4 rounded-full" style={{ backgroundColor: props.project.color }} />
+            <h1 class="text-2xl font-black">{props.project.name}</h1>
+          </div>
+          <p class="mt-2.5 max-w-3xl text-sm text-base-content/90">{props.project.description || 'No project description yet.'}</p>
+          <div class="mt-3 flex flex-wrap gap-2">
+            {props.tags.map((tag) => (
+              <span class="badge badge-outline border-base-content/40 text-base-content">{tag}</span>
+            ))}
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={props.onEdit}>
+            Edit Project
+          </button>
+          <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={props.onAddEpic}>
+            Add Epic
+          </button>
+        </div>
+      </div>
+    </header>
+  )
+}
+
+function KanbanRoutePage(props: {
+  project: Project
+  allTags: string[]
+  routeContext: RouteContext | null
+  treeByParent: Map<string, Unit[]>
+  commentsByUnit: Map<string, Comment[]>
+  userById: Record<string, User>
+  unitById: Record<string, Unit>
+  onEditProject: () => void
+  onAddEpic: () => void
+  onOpenRoute: (unit: Unit) => void
+  onOpenDetails: (unit: Unit) => void
+  onEditUnit: (unit: Unit) => void
+  onCreateChild: (unit: Unit) => void
+  onMoveUnit: (unitId: string, status: UnitStatus) => void
+  onSaveComment: (event: Event, unitId: string) => void
+  commentBody: string
+  commentMentions: Mention[]
+  onCommentBodyChange: (value: string) => void
+  onInsertCommentMention: (mention: Mention) => void
+  suggestions: Suggestions
+  navigate: (path: string, replace?: boolean) => void
+}) {
+  const currentUnit = props.routeContext?.currentUnit || null
+  const taskUnit = props.routeContext?.taskUnit || null
+  const children = props.treeByParent.get(currentUnit?.id || 'root') || []
+  const laneTitle = currentUnit ? `${typeLabels[nextChildType[currentUnit.type] || 'task']} Board` : 'Epic Board'
+
+  return (
+    <section class="space-y-5">
+      {currentUnit ? (
+        <>
+          <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+            <Breadcrumbs project={props.project} chain={props.routeContext?.chainUnits || []} task={taskUnit} unitById={props.unitById} navigate={props.navigate} />
+            <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+              <div class="flex items-center gap-3">
+                <span class="h-4 w-4 rounded-full" style={{ backgroundColor: currentUnit.color }} />
+                <div>
+                  <div class="text-xs font-semibold uppercase tracking-[0.25em] text-base-content/78">{typeLabels[currentUnit.type]}</div>
+                  <h1 class="text-2xl font-black">{currentUnit.title}</h1>
+                </div>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={() => props.onEditUnit(currentUnit)}>
+                  Edit {typeLabels[currentUnit.type]}
+                </button>
+                {nextChildType[currentUnit.type] && (
+                  <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={() => props.onCreateChild(currentUnit)}>
+                    Add {typeLabels[nextChildType[currentUnit.type] as UnitType]}
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+            <UnitDetailContent
+              unit={currentUnit}
+              comments={props.commentsByUnit.get(currentUnit.id) || []}
+              userById={props.userById}
+              suggestions={props.suggestions}
+              commentBody={props.commentBody}
+              onCommentBodyChange={props.onCommentBodyChange}
+              onInsertCommentMention={props.onInsertCommentMention}
+              onSaveComment={(event) => props.onSaveComment(event, currentUnit.id)}
+              onEdit={() => props.onEditUnit(currentUnit)}
+              onCreateChild={nextChildType[currentUnit.type] ? () => props.onCreateChild(currentUnit) : undefined}
+            />
+          </section>
+        </>
+      ) : (
+        <ProjectHero project={props.project} tags={props.allTags} onEdit={props.onEditProject} onAddEpic={props.onAddEpic} />
+      )}
+
+      {!taskUnit && (
+        <KanbanBoard
+          title={laneTitle}
+          subtitle={currentUnit ? `Direct ${typeLabels[nextChildType[currentUnit.type] as UnitType] || 'Task'} children only` : 'Direct epics only'}
+          units={children}
+          onMoveUnit={props.onMoveUnit}
+          onOpenRoute={props.onOpenRoute}
+          onOpenDetails={props.onOpenDetails}
+        />
+      )}
+    </section>
+  )
+}
+
+function KanbanBoard(props: {
+  title: string
+  subtitle: string
+  units: Unit[]
+  onMoveUnit: (unitId: string, status: UnitStatus) => void
+  onOpenRoute: (unit: Unit) => void
+  onOpenDetails: (unit: Unit) => void
+}) {
+  return (
+    <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-4 shadow-panel">
+      <div class="mb-4 flex items-center justify-between">
+        <div>
+          <h2 class="text-lg font-bold">{props.title}</h2>
+          <p class="mt-1 text-xs text-base-content/80">{props.subtitle}</p>
+        </div>
+        <span class="text-xs text-base-content/75">Drag cards between lanes</span>
+      </div>
+      <div class="grid gap-4 xl:grid-cols-4">
+        {statuses.map((status) => {
+          const laneUnits = props.units
+            .filter((unit) => unit.status === status.key)
+            .sort((a, b) => a.position - b.position || a.title.localeCompare(b.title))
+
+          return (
+            <div
+              class="rounded-xl border border-base-300 bg-base-200/60 p-2.5"
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault()
+                const unitId = event.dataTransfer?.getData('text/unit-id')
+                if (unitId) props.onMoveUnit(unitId, status.key)
+              }}
+            >
+              <div class="mb-3 flex items-center justify-between">
+                <span class="font-semibold">{status.label}</span>
+                <span class="badge">{laneUnits.length}</span>
+              </div>
+              <div class="space-y-3">
+                {laneUnits.map((unit) => (
+                  <UnitKanbanCard unit={unit} onOpenRoute={props.onOpenRoute} onOpenDetails={props.onOpenDetails} />
+                ))}
+                {!laneUnits.length && <div class="rounded-xl border border-dashed border-base-300 px-3 py-5 text-center text-xs text-base-content/75">No items</div>}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function UnitKanbanCard(props: { unit: Unit; onOpenRoute: (unit: Unit) => void; onOpenDetails: (unit: Unit) => void }) {
+  return (
+    <article
+      draggable
+      class="rounded-xl border border-base-300 bg-base-100 p-2.5 shadow-sm transition hover:-translate-y-0.5 hover:border-primary/50"
+      onDragStart={(event) => event.dataTransfer?.setData('text/unit-id', props.unit.id)}
+      onClick={() => props.onOpenRoute(props.unit)}
+    >
+      <div class="flex items-center gap-2 text-xs uppercase tracking-wide text-base-content/75">
+        <span class="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: props.unit.color }} />
+        <span>{typeLabels[props.unit.type]}</span>
+      </div>
+      <button
+        class="mt-1.5 block text-left text-sm font-semibold hover:text-primary"
+        onClick={(event) => {
+          event.stopPropagation()
+          props.onOpenDetails(props.unit)
+        }}
+      >
+        {props.unit.title}
+      </button>
+      <div class="mt-1.5 line-clamp-3 text-xs text-base-content/90">{plainText(props.unit.description) || 'No description yet.'}</div>
+    </article>
+  )
+}
+
+function UnitDetailContent(props: {
+  unit: Unit
+  comments: Comment[]
+  userById: Record<string, User>
+  suggestions: Suggestions
+  commentBody: string
+  onCommentBodyChange: (value: string) => void
+  onInsertCommentMention: (mention: Mention) => void
+  onSaveComment: (event: Event) => void
+  onEdit: () => void
+  onCreateChild?: () => void
+}) {
+  return (
+    <div class="space-y-5">
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="badge badge-primary">{typeLabels[props.unit.type]}</span>
+        <span class="badge badge-outline border-base-content/40 text-base-content">{statuses.find((status) => status.key === props.unit.status)?.label}</span>
+        {props.unit.tags.map((tag) => (
+          <span class="badge badge-outline border-base-content/40 text-base-content">{tag}</span>
+        ))}
+      </div>
+
+      <div class="rounded-2xl border border-base-300 bg-base-100 p-4">
+        <Markdown source={props.unit.description || '*No description yet.*'} />
+      </div>
+
+      <div class="flex flex-wrap gap-2">
+        <button class="btn btn-primary btn-sm" onClick={props.onEdit}>
+          Edit unit
+        </button>
+        {props.onCreateChild && (
+          <button class="btn btn-outline btn-sm" onClick={props.onCreateChild}>
+            Add child
+          </button>
+        )}
+      </div>
+
+      <section>
+        <h3 class="mb-3 text-lg font-bold">Comments</h3>
+        <div class="space-y-3">
+          {props.comments.map((comment) => (
+            <article class="rounded-2xl border border-base-300 bg-base-100 p-4">
+              <div class="mb-3 flex items-center gap-3">
+                <img class="h-10 w-10 rounded-full" src={props.userById[comment.authorId]?.gravatar || gravatar(props.userById[comment.authorId]?.email || '')} alt={props.userById[comment.authorId]?.name || 'User'} />
+                <div>
+                  <div class="font-semibold">{props.userById[comment.authorId]?.name || 'Unknown user'}</div>
+                  <div class="text-xs text-base-content/80">{new Date(comment.created).toLocaleString()}</div>
+                </div>
+              </div>
+              <Markdown source={comment.body} />
+            </article>
+          ))}
+          {!props.comments.length && <div class="rounded-2xl border border-dashed border-base-300 p-4 text-sm text-base-content/80">No comments yet.</div>}
+        </div>
+      </section>
+
+      <form class="space-y-4 rounded-2xl border border-base-300 bg-base-200/60 p-4" onSubmit={props.onSaveComment}>
+        <Field label="Add comment">
+          <textarea class="textarea textarea-bordered min-h-28 w-full" value={props.commentBody} onInput={(e) => props.onCommentBodyChange((e.currentTarget as HTMLTextAreaElement).value)} />
+        </Field>
+        <div class="grid gap-4 lg:grid-cols-2">
+          <MentionPanel title="Mention users" items={props.suggestions.users.map((item) => ({ id: item.id, label: item.label, type: 'user' as const }))} onPick={props.onInsertCommentMention} />
+          <MentionPanel title="Mention units" items={props.suggestions.units.map((item) => ({ id: item.id, label: item.label, type: 'unit' as const }))} onPick={props.onInsertCommentMention} />
+        </div>
+        <button class="btn btn-primary" type="submit">
+          Save comment
+        </button>
+      </form>
+    </div>
+  )
+}
+
+function Breadcrumbs(props: { project: Project; chain: Unit[]; task: Unit | null; unitById: Record<string, Unit>; navigate: (path: string, replace?: boolean) => void }) {
+  const items = [{ label: props.project.name, path: projectKanbanPath(props.project.id) }]
+  for (const unit of props.chain) {
+    items.push({ label: unit.title, path: buildUnitPath(props.project.id, props.unitById, unit.id) })
+  }
+  if (props.task) {
+    items.push({ label: props.task.title, path: buildUnitPath(props.project.id, props.unitById, props.task.id) })
+  }
+
+  return (
+    <div class="breadcrumbs text-sm text-base-content/80">
+      <ul>
+        {items.map((item, index) => (
+          <li>
+            <button class={index === items.length - 1 ? 'font-semibold text-base-content' : 'hover:text-primary'} onClick={() => props.navigate(item.path)}>
+              {item.label}
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
@@ -904,7 +1267,7 @@ function TagEditor(props: { tags: string[]; suggestions: string[]; onChange: (ta
       <span class="font-medium">Tags</span>
       <div class="flex flex-wrap gap-2">
         {props.tags.map((tag) => (
-          <button class="badge badge-primary gap-2 px-3 py-3" key={tag} type="button" onClick={() => props.onChange(props.tags.filter((item) => item !== tag))}>
+          <button class="badge badge-primary gap-2 px-3 py-3" type="button" onClick={() => props.onChange(props.tags.filter((item) => item !== tag))}>
             {tag}
             <span>x</span>
           </button>
@@ -927,7 +1290,7 @@ function TagEditor(props: { tags: string[]; suggestions: string[]; onChange: (ta
       </div>
       <datalist id="tag-options">
         {props.suggestions.map((tag) => (
-          <option key={tag} value={tag} />
+          <option value={tag} />
         ))}
       </datalist>
     </div>
@@ -940,7 +1303,6 @@ function ColorPicker(props: { value: string; onChange: (value: string) => void }
       <div class="flex flex-wrap gap-2">
         {presetColors.map((color) => (
           <button
-            key={color}
             type="button"
             class={`h-10 w-10 rounded-full border-4 transition ${props.value.toLowerCase() === color.toLowerCase() ? 'border-neutral scale-105' : 'border-base-300'}`}
             style={{ backgroundColor: color }}
@@ -963,7 +1325,7 @@ function MentionPanel(props: { title: string; items: Mention[]; onPick: (mention
       <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-base-content/85">{props.title}</div>
       <div class="flex max-h-36 flex-wrap gap-2 overflow-auto">
         {props.items.slice(0, 12).map((item) => (
-          <button class="badge badge-outline border-base-content/40 bg-base-100 px-2.5 py-2 text-base-content" key={`${item.type}-${item.id}`} type="button" onClick={() => props.onPick(item)}>
+          <button class="badge badge-outline border-base-content/40 bg-base-100 px-2.5 py-2 text-base-content" type="button" onClick={() => props.onPick(item)}>
             {item.label}
           </button>
         ))}
@@ -982,7 +1344,8 @@ function UnitTreeNode(props: {
   unit: Unit
   treeByParent: Map<string, Unit[]>
   commentsByUnit: Map<string, Comment[]>
-  onOpen: (unit: Unit) => void
+  onOpenRoute: (unit: Unit) => void
+  onOpenDetails: (unit: Unit) => void
   onEdit: (unit: Unit) => void
   onCreateChild: (unit: Unit) => void
 }) {
@@ -990,14 +1353,22 @@ function UnitTreeNode(props: {
   return (
     <div class="rounded-xl border border-base-300 bg-base-100 p-3">
       <div class="flex flex-wrap items-start justify-between gap-3">
-        <button class="min-w-0 flex-1 text-left" onClick={() => props.onOpen(props.unit)}>
-          <div class="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-base-content/70">
+        <div class="min-w-0 flex-1 cursor-pointer" onClick={() => props.onOpenRoute(props.unit)}>
+          <div class="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-base-content/75">
             <span class="h-3 w-3 rounded-full" style={{ backgroundColor: props.unit.color }} />
             <span>{typeLabels[props.unit.type]}</span>
           </div>
-          <div class="mt-1.5 text-base font-semibold">{props.unit.title}</div>
+          <button
+            class="mt-1.5 block text-left text-base font-semibold hover:text-primary"
+            onClick={(event) => {
+              event.stopPropagation()
+              props.onOpenDetails(props.unit)
+            }}
+          >
+            {props.unit.title}
+          </button>
           <div class="mt-1.5 text-xs text-base-content/90">{plainText(props.unit.description) || 'No description yet.'}</div>
-        </button>
+        </div>
         <div class="flex gap-2">
           <button class="btn btn-outline btn-xs" onClick={() => props.onEdit(props.unit)}>
             Edit
@@ -1013,15 +1384,13 @@ function UnitTreeNode(props: {
         <span class="badge badge-outline border-base-content/40 text-base-content">{statuses.find((status) => status.key === props.unit.status)?.label}</span>
         <span class="badge badge-outline border-base-content/40 text-base-content">{props.commentsByUnit.get(props.unit.id)?.length || 0} comments</span>
         {props.unit.tags.map((tag) => (
-          <span class="badge" key={tag}>
-            {tag}
-          </span>
+          <span class="badge">{tag}</span>
         ))}
       </div>
       {!!children.length && (
         <div class="mt-4 space-y-3 border-l-2 border-base-300 pl-4">
           {children.map((child) => (
-            <UnitTreeNode key={child.id} unit={child} treeByParent={props.treeByParent} commentsByUnit={props.commentsByUnit} onOpen={props.onOpen} onEdit={props.onEdit} onCreateChild={props.onCreateChild} />
+            <UnitTreeNode unit={child} treeByParent={props.treeByParent} commentsByUnit={props.commentsByUnit} onOpenRoute={props.onOpenRoute} onOpenDetails={props.onOpenDetails} onEdit={props.onEdit} onCreateChild={props.onCreateChild} />
           ))}
         </div>
       )}
@@ -1079,6 +1448,115 @@ function ApiEndpoint(props: { method: string; path: string; description: string 
       <p class="mt-2 text-xs text-base-content/82">{props.description}</p>
     </div>
   )
+}
+
+function parseRoute(pathname: string): AppRoute {
+  const trimmed = pathname.replace(/\/+$/, '')
+  const segments = (trimmed || '/').split('/').filter(Boolean)
+
+  if (!segments.length) return { kind: 'root' }
+  if (segments[0] !== 'projects' || !segments[1]) return { kind: 'root' }
+
+  const projectId = segments[1]
+  if (segments.length === 2) return { kind: 'project', projectId, view: 'kanban', chain: [] }
+  if (segments[2] === 'backlog' && segments.length === 3) return { kind: 'project', projectId, view: 'backlog', chain: [] }
+  if (segments[2] === 'api' && segments.length === 3) return { kind: 'project', projectId, view: 'api', chain: [] }
+
+  const expected = ['epics', 'features', 'stories', 'tasks']
+  const chain: string[] = []
+  let taskId: string | undefined
+  let index = 2
+  let step = 0
+  while (index < segments.length) {
+    const label = segments[index]
+    const id = segments[index + 1]
+    if (!id || label !== expected[step]) {
+      return { kind: 'project', projectId, view: 'kanban', chain, taskId, invalid: true }
+    }
+    if (label === 'tasks') {
+      taskId = id
+    } else {
+      chain.push(id)
+    }
+    index += 2
+    step += 1
+  }
+
+  return { kind: 'project', projectId, view: 'kanban', chain, taskId }
+}
+
+function resolveRouteContext(route: Extract<AppRoute, { kind: 'project' }>, unitById: Record<string, Unit>): RouteContext {
+  if (route.view !== 'kanban') {
+    return { projectId: route.projectId, currentUnit: null, chainUnits: [], taskUnit: null, invalid: false }
+  }
+
+  const chainUnits: Unit[] = []
+  let invalid = Boolean(route.invalid)
+  let parentId: string | undefined
+
+  route.chain.forEach((unitId, index) => {
+    const unit = unitById[unitId]
+    const expectedType = (['epic', 'feature', 'story'] as UnitType[])[index]
+    if (!unit || unit.type !== expectedType || unit.parentId !== parentId) {
+      invalid = true
+      return
+    }
+    chainUnits.push(unit)
+    parentId = unit.id
+  })
+
+  let taskUnit: Unit | null = null
+  if (route.taskId) {
+    const unit = unitById[route.taskId]
+    if (!unit || unit.type !== 'task' || unit.parentId !== parentId) {
+      invalid = true
+    } else {
+      taskUnit = unit
+    }
+  }
+
+  const currentUnit = chainUnits[chainUnits.length - 1] || null
+  return { projectId: route.projectId, currentUnit, chainUnits, taskUnit, invalid }
+}
+
+function projectKanbanPath(projectId: string) {
+  return `/projects/${projectId}`
+}
+
+function projectBacklogPath(projectId: string) {
+  return `/projects/${projectId}/backlog`
+}
+
+function projectApiPath(projectId: string) {
+  return `/projects/${projectId}/api`
+}
+
+function projectPathForSelection(projectId: string, page: ProjectPage | null) {
+  if (page === 'backlog') return projectBacklogPath(projectId)
+  if (page === 'api') return projectApiPath(projectId)
+  return projectKanbanPath(projectId)
+}
+
+function taskParentPath(route: Extract<AppRoute, { kind: 'project' }>) {
+  if (!route.taskId) return projectKanbanPath(route.projectId)
+  const parts = route.chain.flatMap((id, index) => {
+    const label = ['epics', 'features', 'stories'][index]
+    return [label, id]
+  })
+  return `/projects/${route.projectId}/${parts.join('/')}`
+}
+
+function buildUnitPath(projectId: string, unitById: Record<string, Unit>, unitId: string) {
+  const chain: Unit[] = []
+  let current: Unit | undefined = unitById[unitId]
+  while (current) {
+    chain.push(current)
+    current = current.parentId ? unitById[current.parentId] : undefined
+  }
+  chain.reverse()
+  if (!chain.length) return projectKanbanPath(projectId)
+  const segments = chain.flatMap((unit) => [pluralSegments[unit.type], unit.id])
+  return `/projects/${projectId}/${segments.join('/')}`
 }
 
 function plainText(markdown: string) {
