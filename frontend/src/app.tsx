@@ -879,9 +879,7 @@ export default function App() {
             </>
           )}
 
-          {route.kind === 'mcp' && (
-            <MCPDocsPage />
-          )}
+          {route.kind === 'mcp' && <MCPDocsPage docsConfig={apiDocsConfig} />}
 
           {route.kind === 'project' && !tree && <div class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-6 shadow-panel">Loading project…</div>}
 
@@ -2561,21 +2559,36 @@ function ApiEndpointCard(props: {
   )
 }
 
-function MCPDocsPage() {
-  const commandSnippet = `./backend/agilerr mcp`
-  const claudeDesktopSnippet = `{
+function MCPDocsPage(props: { docsConfig: ApiDocsConfig }) {
+  const protocolVersion = '2025-03-26'
+  const endpoint = typeof window === 'undefined' ? 'http://localhost:5040/mcp' : `${window.location.origin}/mcp`
+  const httpSnippet = `{
   "mcpServers": {
     "agilerr": {
-      "command": "/absolute/path/to/agilerr",
-      "args": ["mcp"],
-      "env": {
-        "PB_DATA_DIR": "/absolute/path/to/pb_data",
-        "ADMIN_EMAIL": "admin@agilerr.local",
-        "ADMIN_PASSWORD": "change-me-now"
+      "url": "${endpoint}",
+      "headers": {
+        "${props.docsConfig.headerName}": "${props.docsConfig.apiKey || '<agilerr_api_key>'}"
       }
     }
   }
 }`
+  const initializeSnippet = `curl -X POST ${endpoint} \\
+  -H "${props.docsConfig.headerName}: ${props.docsConfig.apiKey || '<agilerr_api_key>'}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "${protocolVersion}",
+      "capabilities": {},
+      "clientInfo": {
+        "name": "agilerr-example",
+        "version": "1.0.0"
+      }
+    }
+  }'`
+  const stdioSnippet = `./backend/agilerr mcp`
   const toolsSnippet = `list_projects
 list_project_items
 add_item`
@@ -2585,23 +2598,37 @@ add_item`
       <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
         <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">MCP</p>
         <h1 class="mt-2 text-2xl font-black">Model Context Protocol server</h1>
-        <p class="mt-2 max-w-3xl text-sm text-base-content/85">Agilerr includes a stdio MCP server mode so agents can discover projects and add backlog items directly. Run the same binary with the `mcp` argument.</p>
+        <p class="mt-2 max-w-3xl text-sm text-base-content/85">Agilerr exposes MCP over HTTP at `/mcp`, so agents can connect to the running app without launching a separate binary.</p>
       </section>
 
       <section class="grid gap-5 xl:grid-cols-[1fr,0.95fr]">
         <div class="space-y-5">
-          <DocCard title="Launch command" body="Start the MCP server over stdio. Agents should use this as the command target, not the HTTP server mode.">
-            <CopyableCodeBlock code={commandSnippet} />
+          <DocCard title="HTTP endpoint" body="Use the running Agilerr server as the MCP endpoint. Authenticate with the same API key used for the REST API.">
+            <div class="mb-4 rounded-xl border border-base-300 bg-base-200/50 px-4 py-3">
+              <div class="text-xs uppercase tracking-[0.24em] text-base-content/60">Endpoint</div>
+              <div class="mt-2 font-mono text-sm">{endpoint}</div>
+              <div class="mt-3 text-xs text-base-content/75">
+                Header: <span class="font-mono">{props.docsConfig.headerName}</span>
+              </div>
+              <div class="mt-1 text-xs text-base-content/75">
+                Key: <span class="font-mono">{props.docsConfig.apiKeyMasked}</span>
+              </div>
+            </div>
+            <CopyableCodeBlock code={httpSnippet} />
           </DocCard>
 
-          <DocCard title="Available tools" body="The first pass exposes enough tools for agents to inspect projects and create work items.">
-            <CopyableCodeBlock code={toolsSnippet} />
+          <DocCard title="Initialize request" body="If you want to test the transport directly, send JSON-RPC over HTTP POST to `/mcp`.">
+            <CopyableCodeBlock code={initializeSnippet} />
           </DocCard>
         </div>
 
         <div class="space-y-5">
-          <DocCard title="Client config" body="Example Claude Desktop-style MCP server config. Adjust the binary path and PocketBase data directory for your machine.">
-            <CopyableCodeBlock code={claudeDesktopSnippet} />
+          <DocCard title="Available tools" body="The current MCP surface is intentionally small: enough for agents to discover projects and create backlog items.">
+            <CopyableCodeBlock code={toolsSnippet} />
+          </DocCard>
+
+          <DocCard title="Optional stdio mode" body="The binary MCP mode still works if you prefer a local stdio transport instead of HTTP.">
+            <CopyableCodeBlock code={stdioSnippet} />
           </DocCard>
         </div>
       </section>
@@ -2609,9 +2636,9 @@ add_item`
       <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
         <h2 class="text-lg font-bold">Notes</h2>
         <div class="mt-4 space-y-3 text-sm text-base-content/82">
-          <p>The MCP mode reads the same environment variables as the main binary, especially `PB_DATA_DIR`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD`.</p>
+          <p>The HTTP endpoint accepts either the configured `X-API-Key` or a valid PocketBase auth token. The API key is usually the simplest option for agent clients.</p>
           <p>Use `list_projects` first to discover a project id. Use `list_project_items` to inspect parent item ids before creating child items. Then call `add_item` with `projectId`, `type`, `title`, and any optional fields like `parentId`, `status`, `tags`, `assigneeId`, or bug `priority`.</p>
-          <p>The server speaks MCP over stdio and is intended for agent clients that support the standard initialize, tools/list, and tools/call flow.</p>
+          <p>The server supports the standard MCP initialize, tools/list, and tools/call flow over HTTP. Notification-only requests return `202 Accepted` with no response body.</p>
         </div>
       </section>
     </section>

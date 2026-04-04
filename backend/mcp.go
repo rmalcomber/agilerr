@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -83,7 +84,94 @@ func (s *AgilerrService) RunMCPServer() error {
 	}
 }
 
+func (s *AgilerrService) RegisterMCPRoutes(e *core.ServeEvent) {
+	e.Router.GET("/mcp", s.handleMCPHTTPInfo)
+	e.Router.OPTIONS("/mcp", s.handleMCPHTTPOptions)
+	e.Router.Group("/mcp").BindFunc(s.requireAPIAccess).POST("", s.handleMCPHTTP)
+}
+
+func (s *AgilerrService) handleMCPHTTPInfo(e *core.RequestEvent) error {
+	e.Response.Header().Set("Allow", "POST, OPTIONS")
+	return e.JSON(http.StatusMethodNotAllowed, map[string]any{
+		"error":           "use POST for MCP over HTTP",
+		"protocolVersion": mcpProtocolVersion,
+		"auth":            "Provide X-API-Key or a valid PocketBase auth token.",
+	})
+}
+
+func (s *AgilerrService) handleMCPHTTPOptions(e *core.RequestEvent) error {
+	e.Response.Header().Set("Allow", "POST, OPTIONS")
+	return e.NoContent(http.StatusNoContent)
+}
+
+func (s *AgilerrService) handleMCPHTTP(e *core.RequestEvent) error {
+	body, err := io.ReadAll(e.Request.Body)
+	if err != nil {
+		return e.JSON(http.StatusBadRequest, mcpResponse{
+			JSONRPC: "2.0",
+			Error:   &mcpError{Code: -32700, Message: "failed to read request body"},
+		})
+	}
+
+	body = bytesTrimSpace(body)
+	if len(body) == 0 {
+		return e.JSON(http.StatusBadRequest, mcpResponse{
+			JSONRPC: "2.0",
+			Error:   &mcpError{Code: -32700, Message: "request body is required"},
+		})
+	}
+
+	if body[0] == '[' {
+		var requests []mcpRequest
+		if err := json.Unmarshal(body, &requests); err != nil {
+			return e.JSON(http.StatusBadRequest, mcpResponse{
+				JSONRPC: "2.0",
+				Error:   &mcpError{Code: -32700, Message: "parse error"},
+			})
+		}
+		if len(requests) == 0 {
+			return e.JSON(http.StatusBadRequest, mcpResponse{
+				JSONRPC: "2.0",
+				Error:   &mcpError{Code: -32600, Message: "invalid request"},
+			})
+		}
+
+		responses := make([]mcpResponse, 0, len(requests))
+		for _, req := range requests {
+			resp := s.handleMCPRequest(req)
+			if resp != nil {
+				responses = append(responses, *resp)
+			}
+		}
+		if len(responses) == 0 {
+			return e.NoContent(http.StatusAccepted)
+		}
+		return e.JSON(http.StatusOK, responses)
+	}
+
+	var request mcpRequest
+	if err := json.Unmarshal(body, &request); err != nil {
+		return e.JSON(http.StatusBadRequest, mcpResponse{
+			JSONRPC: "2.0",
+			Error:   &mcpError{Code: -32700, Message: "parse error"},
+		})
+	}
+
+	response := s.handleMCPRequest(request)
+	if response == nil {
+		return e.NoContent(http.StatusAccepted)
+	}
+	return e.JSON(http.StatusOK, response)
+}
+
 func (s *AgilerrService) handleMCPRequest(req mcpRequest) *mcpResponse {
+	if req.JSONRPC != "" && req.JSONRPC != "2.0" {
+		return &mcpResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Error:   &mcpError{Code: -32600, Message: "invalid jsonrpc version"},
+		}
+	}
 	switch req.Method {
 	case "initialize":
 		return &mcpResponse{

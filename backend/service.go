@@ -66,6 +66,7 @@ func (s *AgilerrService) EnsureAdmin() error {
 
 func (s *AgilerrService) RegisterRoutes(e *core.ServeEvent) {
 	group := e.Router.Group("/api/agilerr").BindFunc(s.requireAPIAccess)
+	s.RegisterMCPRoutes(e)
 
 	group.GET("/me", s.handleMe)
 	group.GET("/docs-config", s.handleDocsConfig)
