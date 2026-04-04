@@ -1,8 +1,9 @@
 import type { ComponentChildren } from 'preact'
-import { useEffect, useMemo, useState } from 'preact/hooks'
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import {
   ArrowRight,
   BookOpen,
+  ChevronLeft,
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
@@ -152,9 +153,13 @@ export default function App() {
   const [unitEditor, setUnitEditor] = useState<UnitDraft | null>(null)
   const [detailUnitId, setDetailUnitId] = useState<string | null>(null)
   const [bugsView, setBugsView] = useState<'list' | 'kanban'>('kanban')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false)
   const [commentBody, setCommentBody] = useState('')
   const [commentMentions, setCommentMentions] = useState<Mention[]>([])
   const [suggestions, setSuggestions] = useState<Suggestions>({ units: [], users: [], tags: [] })
+  const projectMenuRef = useRef<HTMLDivElement | null>(null)
+  const projectMenuButtonRef = useRef<HTMLButtonElement | null>(null)
 
   useEffect(() => {
     void loadSession()
@@ -168,6 +173,18 @@ export default function App() {
       window.removeEventListener('popstate', handlePopState)
     }
   }, [])
+
+  useEffect(() => {
+    if (!projectMenuOpen) return
+    function handlePointerDown(event: MouseEvent) {
+      if (!projectMenuRef.current?.contains(event.target as Node)) {
+        setProjectMenuOpen(false)
+        projectMenuButtonRef.current?.blur()
+      }
+    }
+    window.addEventListener('mousedown', handlePointerDown)
+    return () => window.removeEventListener('mousedown', handlePointerDown)
+  }, [projectMenuOpen])
 
   const selectedProjectId = route.kind === 'project' ? route.projectId : null
 
@@ -542,100 +559,145 @@ export default function App() {
 
   return (
     <div class="min-h-screen bg-[radial-gradient(circle_at_top,#1e293b,transparent_20%),linear-gradient(180deg,#0f172a_0%,#111827_100%)] text-base-content">
-      <div class="grid min-h-screen lg:grid-cols-[260px,1fr]">
-        <aside class="border-r border-base-300/50 bg-base-100/75 p-4 backdrop-blur">
+      <div class={`grid min-h-screen ${sidebarCollapsed ? 'lg:grid-cols-[88px,1fr]' : 'lg:grid-cols-[260px,1fr]'}`}>
+        <aside class={`flex flex-col border-r border-base-300/50 bg-base-100/75 backdrop-blur ${sidebarCollapsed ? 'items-center px-3 py-4' : 'p-4'}`}>
           <div>
-            <button class="text-left" onClick={() => navigate('/')}>
-              <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">Agilerr</p>
-              <h1 class="mt-1.5 text-xl font-black">Workspace</h1>
-            </button>
+            <div class={`flex gap-2 ${sidebarCollapsed ? 'w-full flex-col items-center' : 'items-start justify-between'}`}>
+              <button class={`min-w-0 ${sidebarCollapsed ? 'text-center' : 'text-left'}`} onClick={() => navigate('/')} title="Go to projects" aria-label="Go to projects">
+                <p class={`text-xs font-semibold uppercase tracking-[0.3em] text-accent ${sidebarCollapsed ? 'text-center' : ''}`}>Agilerr</p>
+                {!sidebarCollapsed && <h1 class="mt-1.5 text-xl font-black">Workspace</h1>}
+              </button>
+              <button
+                class="btn btn-ghost btn-sm h-9 min-h-9 w-9 px-0"
+                onClick={() => setSidebarCollapsed((current) => !current)}
+                title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              >
+                <ChevronLeft class={sidebarCollapsed ? 'rotate-180' : ''} size={16} />
+              </button>
+            </div>
           </div>
 
-          <div class="mt-5">
-            <details class="dropdown w-full">
-              <summary class="btn btn-outline btn-sm h-10 min-h-10 w-full justify-between">
-                <span class="truncate">{selectedProject?.name || 'Select a project'}</span>
-                <span class="inline-flex items-center gap-2 text-xs text-base-content/70">
-                  <span>{projects.length} total</span>
-                  <ChevronsUpDown size={14} />
-                </span>
-              </summary>
-              <ul class="menu dropdown-content z-20 mt-2 w-full rounded-box border border-base-300 bg-base-100 p-2 shadow">
-                {projects.map((project) => (
-                  <li key={project.id}>
+          <div class={`mt-5 ${sidebarCollapsed ? 'w-full' : ''}`}>
+            <div class="relative" ref={projectMenuRef}>
+              <button
+                ref={projectMenuButtonRef}
+                class={`btn btn-outline btn-sm h-10 min-h-10 ${sidebarCollapsed ? 'mx-auto flex w-10 justify-center px-0' : 'w-full justify-between'}`}
+                onClick={() => {
+                  setProjectMenuOpen((current) => !current)
+                  projectMenuButtonRef.current?.blur()
+                }}
+                title={selectedProject?.name || 'Select a project'}
+                aria-label={selectedProject?.name || 'Select a project'}
+              >
+                {sidebarCollapsed ? (
+                  <span class="inline-flex h-6 w-6 items-center justify-center rounded-full" style={{ backgroundColor: selectedProject?.color || 'rgba(148,163,184,0.45)' }}>
+                    <span class="text-[10px] font-bold uppercase text-neutral-content">{(selectedProject?.name || 'P').slice(0, 1)}</span>
+                  </span>
+                ) : (
+                  <>
+                    <span class="truncate">{selectedProject?.name || 'Select a project'}</span>
+                    <span class="inline-flex items-center gap-2 text-xs text-base-content/70">
+                      <span>{projects.length} total</span>
+                      <ChevronsUpDown size={14} />
+                    </span>
+                  </>
+                )}
+              </button>
+              {projectMenuOpen && (
+                <ul class={`menu absolute z-20 mt-2 rounded-box border border-base-300 bg-base-100 p-2 shadow ${sidebarCollapsed ? 'left-0 w-56' : 'w-full'}`}>
+                  {projects.map((project) => (
+                    <li key={project.id}>
+                      <button
+                        class={selectedProjectId === project.id ? 'active' : ''}
+                        onClick={() => {
+                          navigate(projectPathForSelection(project.id, activePage))
+                          setProjectMenuOpen(false)
+                          projectMenuButtonRef.current?.blur()
+                        }}
+                      >
+                        <span class="inline-flex items-center gap-2">
+                          <span class="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: project.color }} />
+                          <span>{project.name}</span>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                  <li class="mt-1 border-t border-base-300 pt-1">
                     <button
-                      class={selectedProjectId === project.id ? 'active' : ''}
-                      onClick={() => navigate(projectPathForSelection(project.id, activePage))}
+                      onClick={() => {
+                        setProjectMenuOpen(false)
+                        projectMenuButtonRef.current?.blur()
+                        setProjectModalOpen(true)
+                      }}
                     >
-                      <span class="inline-flex items-center gap-2">
-                        <span class="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: project.color }} />
-                        <span>{project.name}</span>
-                      </span>
+                      <Plus size={16} />
+                      Create new project
                     </button>
                   </li>
-                ))}
-                <li class="mt-1 border-t border-base-300 pt-1">
-                  <button onClick={() => setProjectModalOpen(true)}>
-                    <Plus size={16} />
-                    Create new project
-                  </button>
-                </li>
-              </ul>
-            </details>
+                </ul>
+              )}
+            </div>
           </div>
 
-          <nav class="mt-5">
-            <ul class="menu rounded-box bg-base-100/75 p-2">
+          <nav class={`mt-5 ${sidebarCollapsed ? 'w-full' : ''}`}>
+            <ul class={`menu rounded-box bg-base-100/75 p-2 ${sidebarCollapsed ? 'items-center' : ''}`}>
               <li>
-                <button class={route.kind === 'root' ? 'active' : ''} onClick={() => navigate('/')}>
+                <button class={`${route.kind === 'root' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate('/')} title="Projects" aria-label="Projects">
                   <LayoutGrid size={16} />
-                  Projects
+                  {!sidebarCollapsed && <span>Projects</span>}
                 </button>
               </li>
-              <li>
-                <button class={activePage === 'kanban' ? 'active' : ''} disabled={!selectedProjectId} onClick={() => selectedProjectId && navigate(projectKanbanPath(selectedProjectId))}>
-                  <FolderKanban size={16} />
-                  Kanban
-                </button>
-              </li>
-              <li>
-                <button class={activePage === 'backlog' ? 'active' : ''} disabled={!selectedProjectId} onClick={() => selectedProjectId && navigate(projectBacklogPath(selectedProjectId))}>
-                  <BookOpen size={16} />
-                  Backlog
-                </button>
-              </li>
-              <li>
-                <button class={activePage === 'api' ? 'active' : ''} disabled={!selectedProjectId} onClick={() => selectedProjectId && navigate(projectApiPath(selectedProjectId))}>
-                  <SquarePen size={16} />
-                  API
-                </button>
-              </li>
-              <li>
-                <button class={activePage === 'bugs' ? 'active' : ''} disabled={!selectedProjectId} onClick={() => selectedProjectId && navigate(projectBugsPath(selectedProjectId))}>
-                  <Bug size={16} />
-                  Bugs
-                </button>
-              </li>
-              <li>
-                <button class={activePage === 'settings' ? 'active' : ''} disabled={!selectedProjectId} onClick={() => selectedProjectId && navigate(projectSettingsPath(selectedProjectId))}>
-                  <Settings2 size={16} />
-                  Settings
-                </button>
-              </li>
+              {selectedProjectId && (
+                <>
+                  <li class={sidebarCollapsed ? '' : 'pl-4'}>
+                    <button class={`${activePage === 'kanban' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(projectKanbanPath(selectedProjectId))} title="Kanban" aria-label="Kanban">
+                      <FolderKanban size={16} />
+                      {!sidebarCollapsed && <span>Kanban</span>}
+                    </button>
+                  </li>
+                  <li class={sidebarCollapsed ? '' : 'pl-4'}>
+                    <button class={`${activePage === 'backlog' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(projectBacklogPath(selectedProjectId))} title="Backlog" aria-label="Backlog">
+                      <BookOpen size={16} />
+                      {!sidebarCollapsed && <span>Backlog</span>}
+                    </button>
+                  </li>
+                  <li class={sidebarCollapsed ? '' : 'pl-4'}>
+                    <button class={`${activePage === 'api' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(projectApiPath(selectedProjectId))} title="API" aria-label="API">
+                      <SquarePen size={16} />
+                      {!sidebarCollapsed && <span>API</span>}
+                    </button>
+                  </li>
+                  <li class={sidebarCollapsed ? '' : 'pl-4'}>
+                    <button class={`${activePage === 'bugs' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(projectBugsPath(selectedProjectId))} title="Bugs" aria-label="Bugs">
+                      <Bug size={16} />
+                      {!sidebarCollapsed && <span>Bugs</span>}
+                    </button>
+                  </li>
+                  <li class={sidebarCollapsed ? '' : 'pl-4'}>
+                    <button class={`${activePage === 'settings' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(projectSettingsPath(selectedProjectId))} title="Settings" aria-label="Settings">
+                      <Settings2 size={16} />
+                      {!sidebarCollapsed && <span>Settings</span>}
+                    </button>
+                  </li>
+                </>
+              )}
             </ul>
           </nav>
 
-          <div class="mt-6 rounded-xl border border-base-300 bg-base-100 p-3">
-            <div class="flex items-center gap-3">
+          <div class={`mt-auto rounded-xl border border-base-300 bg-base-100 p-3 ${sidebarCollapsed ? 'w-full max-w-[56px]' : ''}`}>
+            <div class={`flex items-center gap-3 ${sidebarCollapsed ? 'justify-center' : ''}`}>
               <img class="h-10 w-10 rounded-full ring-2 ring-base-300" src={currentUser.gravatar || gravatar(currentUser.email)} alt={currentUser.name} />
-              <div>
-                <div class="text-sm font-semibold">{currentUser.name}</div>
-                <div class="text-xs text-base-content/85">{currentUser.email}</div>
-              </div>
+              {!sidebarCollapsed && (
+                <div>
+                  <div class="text-sm font-semibold">{currentUser.name}</div>
+                  <div class="text-xs text-base-content/85">{currentUser.email}</div>
+                </div>
+              )}
             </div>
-            <button class="btn btn-outline btn-sm mt-3 h-9 min-h-9 w-full" onClick={() => pb.authStore.clear()}>
+            <button class={`btn btn-outline btn-sm mt-3 h-9 min-h-9 ${sidebarCollapsed ? 'w-10 px-0' : 'w-full'}`} onClick={() => pb.authStore.clear()} title="Log out" aria-label="Log out">
               <LogOut size={16} />
-              Log out
+              {!sidebarCollapsed && <span>Log out</span>}
             </button>
           </div>
         </aside>
