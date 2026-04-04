@@ -18,6 +18,7 @@ import {
   LogOut,
   Pencil,
   Plus,
+  Sparkles,
   Settings2,
   SquarePen,
   X,
@@ -28,6 +29,10 @@ import md5 from 'blueimp-md5'
 import { api } from './lib/api'
 import { pb } from './lib/pocketbase'
 import type {
+  AIPlanChatMessage,
+  AIPlanProposal,
+  AIPlanState,
+  AIProjectDraft,
   ApiDocsConfig,
   Comment,
   Mention,
@@ -124,6 +129,30 @@ type UnitDraft = {
   tags: string[]
 }
 
+type AIAddMode = 'project-draft' | 'session'
+
+type AIAddContext = {
+  mode: AIAddMode
+  projectId?: string
+  contextUnitId?: string
+  targetType: 'project' | 'epic' | 'feature' | 'story' | 'bug'
+  title: string
+  submitLabel: string
+  includeGrandchildrenAllowed: boolean
+}
+
+type AIAddModalState = {
+  context: AIAddContext
+  input: string
+  loading: boolean
+  includeGrandchildren: boolean
+  session?: AIPlanState
+  draftMessages: AIPlanChatMessage[]
+  draftProject: AIProjectDraft
+  acceptedProposalIds: string[]
+  editingProposalIds: string[]
+}
+
 type AppRoute =
   | { kind: 'root' }
   | { kind: 'api' }
@@ -158,6 +187,16 @@ const emptyProjectDraft = {
   tags: [] as string[],
   unitColors: { ...defaultUnitColors } as UnitColors,
   statusColors: { ...defaultStatusColors } as StatusColors,
+}
+
+function canAIAddType(targetType: string) {
+  return targetType === 'project' || targetType === 'epic' || targetType === 'feature' || targetType === 'story' || targetType === 'bug'
+}
+
+function aiDisabledReason(targetType: string, openAIConfigured: boolean) {
+  if (!openAIConfigured) return 'AI Add requires OPENAI_API_KEY.'
+  if (!canAIAddType(targetType)) return 'AI Add does not generate tasks.'
+  return ''
 }
 
 function readStoredBoolean(key: string, fallback: boolean) {
@@ -201,9 +240,10 @@ export default function App() {
   const [projectDraft, setProjectDraft] = useState(emptyProjectDraft)
   const [projectEditor, setProjectEditor] = useState(emptyProjectDraft)
   const [unitEditor, setUnitEditor] = useState<UnitDraft | null>(null)
+  const [aiAddModal, setAIAddModal] = useState<AIAddModalState | null>(null)
   const [detailUnitId, setDetailUnitId] = useState<string | null>(null)
   const [apiProjectId, setApiProjectId] = useState<string>(() => (typeof window === 'undefined' ? '' : window.localStorage.getItem(storageKeys.lastProjectId) || ''))
-  const [apiDocsConfig, setApiDocsConfig] = useState<ApiDocsConfig>({ configured: false, headerName: 'X-API-Key', apiKey: '', apiKeyMasked: 'Not configured' })
+  const [apiDocsConfig, setApiDocsConfig] = useState<ApiDocsConfig>({ configured: false, headerName: 'X-API-Key', apiKey: '', apiKeyMasked: 'Not configured', openAIConfigured: false })
   const [bugsView, setBugsView] = useState<'list' | 'kanban'>(() => readStoredBugsView())
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readStoredBoolean(storageKeys.sidebarCollapsed, false))
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
@@ -469,6 +509,212 @@ export default function App() {
     }
   }
 
+  async function openProjectDraftAI() {
+    setAIAddModal({
+      context: {
+        mode: 'project-draft',
+        targetType: 'project',
+        title: 'AI Add project',
+        submitLabel: 'Plan project',
+        includeGrandchildrenAllowed: false,
+      },
+      input: '',
+      loading: false,
+      includeGrandchildren: false,
+      draftMessages: [],
+      draftProject: {
+        name: projectDraft.name,
+        description: projectDraft.description,
+        tags: [...projectDraft.tags],
+      },
+      acceptedProposalIds: [],
+      editingProposalIds: [],
+    })
+  }
+
+  async function openAIAdd(projectId: string, targetType: 'epic' | 'feature' | 'story' | 'bug', contextUnitId?: string) {
+    setAIAddModal({
+      context: {
+        mode: 'session',
+        projectId,
+        contextUnitId,
+        targetType,
+        title: `AI Add ${targetType === 'story' ? 'user stories' : targetType + 's'}`,
+        submitLabel: `Plan ${targetType === 'story' ? 'user stories' : targetType + 's'}`,
+        includeGrandchildrenAllowed: targetType === 'epic' || targetType === 'feature',
+      },
+      input: '',
+      loading: true,
+      includeGrandchildren: false,
+      draftMessages: [],
+      draftProject: {
+        name: '',
+        description: '',
+        tags: [],
+      },
+      acceptedProposalIds: [],
+      editingProposalIds: [],
+    })
+
+    try {
+      const state = await api.openAIPlan(projectId, {
+        contextUnitId,
+        targetType,
+        includeGrandchildren: false,
+      })
+      setAIAddModal((current) =>
+        current
+          ? {
+              ...current,
+              loading: false,
+              session: state,
+              acceptedProposalIds: state.proposals.map((proposal) => proposal.id),
+            }
+          : current,
+      )
+    } catch (err) {
+      setAIAddModal(null)
+      setError(err instanceof Error ? err.message : 'Failed to open AI Add')
+    }
+  }
+
+  async function submitAIAdd() {
+    if (!aiAddModal || aiAddModal.loading) return
+    const message = aiAddModal.input.trim()
+    if (!message) return
+
+    setAIAddModal({ ...aiAddModal, loading: true })
+    try {
+      if (aiAddModal.context.mode === 'project-draft') {
+        const response = await api.aiProjectDraft({
+          prompt: message,
+          draft: aiAddModal.draftProject,
+          messages: aiAddModal.draftMessages,
+        })
+        setAIAddModal((current) =>
+          current
+            ? {
+                ...current,
+                loading: false,
+                input: '',
+                draftMessages: [
+                  ...current.draftMessages,
+                  { role: 'user', content: message },
+                  { role: 'assistant', content: response.assistantMessage },
+                ],
+                draftProject: response.projectDraft || current.draftProject,
+              }
+            : current,
+        )
+        return
+      }
+
+      if (!aiAddModal.session?.session?.id) return
+      const response = await api.sendAIPlanMessage(aiAddModal.session.session.id, {
+        message,
+        includeGrandchildren: aiAddModal.includeGrandchildren && aiAddModal.context.includeGrandchildrenAllowed,
+      })
+      setAIAddModal((current) =>
+        current
+          ? {
+              ...current,
+              loading: false,
+              input: '',
+              session: response,
+              acceptedProposalIds: response.proposals.map((proposal) => proposal.id),
+            }
+          : current,
+      )
+    } catch (err) {
+      console.error(err)
+      setAIAddModal((current) => (current ? { ...current, loading: false } : current))
+      setError(err instanceof Error ? err.message : 'Connecting to the OpenAI API failed.')
+    }
+  }
+
+  async function applyAIAdd(done = false) {
+    if (!aiAddModal) return
+    if (aiAddModal.context.mode === 'project-draft') {
+      setProjectDraft((current) => ({
+        ...current,
+        name: aiAddModal.draftProject.name,
+        description: aiAddModal.draftProject.description,
+        tags: [...aiAddModal.draftProject.tags],
+      }))
+      setProjectModalOpen(true)
+      setAIAddModal(null)
+      return
+    }
+    const sessionId = aiAddModal.session?.session?.id
+    if (!sessionId) return
+
+    setAIAddModal({ ...aiAddModal, loading: true })
+    try {
+      const response = await api.applyAIPlan(sessionId, {
+        proposals: aiAddModal.session?.proposals || [],
+        acceptedProposalIds: aiAddModal.acceptedProposalIds,
+        done,
+      })
+      if (aiAddModal.context.projectId) {
+        await loadProject(aiAddModal.context.projectId)
+      }
+      if (done) {
+        setAIAddModal(null)
+        return
+      }
+      setAIAddModal((current) =>
+        current
+          ? {
+              ...current,
+              loading: false,
+              session: response.state,
+              acceptedProposalIds: response.state.proposals.map((proposal) => proposal.id),
+              editingProposalIds: [],
+            }
+          : current,
+      )
+    } catch (err) {
+      console.error(err)
+      setAIAddModal((current) => (current ? { ...current, loading: false } : current))
+      setError(err instanceof Error ? err.message : 'Failed to apply AI Add proposals')
+    }
+  }
+
+  function toggleAIProposalAccepted(proposalId: string) {
+    setAIAddModal((current) => {
+      if (!current) return current
+      const selected = current.acceptedProposalIds.includes(proposalId)
+      return {
+        ...current,
+        acceptedProposalIds: selected ? current.acceptedProposalIds.filter((id) => id !== proposalId) : [...current.acceptedProposalIds, proposalId],
+      }
+    })
+  }
+
+  function toggleAIProposalEditing(proposalId: string) {
+    setAIAddModal((current) => {
+      if (!current) return current
+      const selected = current.editingProposalIds.includes(proposalId)
+      return {
+        ...current,
+        editingProposalIds: selected ? current.editingProposalIds.filter((id) => id !== proposalId) : [...current.editingProposalIds, proposalId],
+      }
+    })
+  }
+
+  function updateAIProposal(proposalId: string, patch: Partial<AIPlanProposal>) {
+    setAIAddModal((current) => {
+      if (!current?.session) return current
+      return {
+        ...current,
+        session: {
+          ...current.session,
+          proposals: updateAIProposalTree(current.session.proposals, proposalId, patch),
+        },
+      }
+    })
+  }
+
   async function saveUnit(event: Event) {
     event.preventDefault()
     if (!unitEditor) return
@@ -629,7 +875,7 @@ export default function App() {
             <div class="mt-7 grid gap-3 sm:grid-cols-3">
               <ValueCard title="Strict hierarchy" body="Project -> Epic -> Feature -> User Story -> Task." />
               <ValueCard title="Context routing" body="Drill from project epics down to tasks with real project URLs and breadcrumbs." />
-              <ValueCard title="Smart Add" body="Use your OpenAI key to clean up items and ask for missing clarity." />
+              <ValueCard title="AI Add" body="Use your OpenAI key to shape project metadata and business-facing backlog items." />
             </div>
           </section>
 
@@ -854,6 +1100,8 @@ export default function App() {
             <ProjectDirectory
               projects={projects}
               onCreate={() => setProjectModalOpen(true)}
+              onCreateAI={() => void openProjectDraftAI()}
+              openAIConfigured={apiDocsConfig.openAIConfigured}
               onOpen={(projectId) => navigate(projectDashboardPath(projectId))}
             />
           )}
@@ -887,7 +1135,7 @@ export default function App() {
             <>
               {route.view === 'backlog' && (
                 <>
-                  <ProjectHero project={tree.project} tags={tree.tags} onEdit={() => navigate(projectSettingsPath(tree.project.id))} onAddPrimary={() => openNewUnit(tree.project.id)} addLabel="Add epic" addTitle="Add epic" />
+                  <ProjectHero project={tree.project} tags={tree.tags} onEdit={() => navigate(projectSettingsPath(tree.project.id))} onAddPrimary={() => openNewUnit(tree.project.id)} onAddAI={() => void openAIAdd(tree.project.id, 'epic')} openAIConfigured={apiDocsConfig.openAIConfigured} addLabel="Add epic" addTitle="Add epic" aiTitle="AI Add epics" aiTargetType="epic" />
                   <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-4 shadow-panel">
                     <div class="mb-4 flex items-center justify-between">
                       <h2 class="text-lg font-bold">Backlog</h2>
@@ -951,6 +1199,13 @@ export default function App() {
                           onOpenDetails={openUnitDetails}
                           onEdit={openEditUnit}
                           onCreateChild={(target) => openNewUnit(tree.project.id, target)}
+                          onCreateAIChild={(target) => {
+                            const targetType = nextChildType[target.type]
+                            if (targetType && canAIAddType(targetType)) {
+                              void openAIAdd(tree.project.id, targetType as 'feature' | 'story' | 'bug' | 'epic', target.id)
+                            }
+                          }}
+                          openAIConfigured={apiDocsConfig.openAIConfigured}
                         />
                       ))}
                       {!backlogNodes.length && <div class="rounded-xl border border-dashed border-base-300 p-3 text-xs text-base-content/80">No items match the current filter.</div>}
@@ -960,17 +1215,19 @@ export default function App() {
               )}
 
               {route.view === 'dashboard' && (
-                <ProjectDashboardPage
-                  currentUser={currentUser}
-                  project={tree.project}
+                  <ProjectDashboardPage
+                    currentUser={currentUser}
+                    project={tree.project}
                   units={standardUnits}
                   bugs={bugUnits}
                   comments={comments}
                   assignedFilterOpen={assignedFilterOpen}
                   assignedTypes={assignedTypes}
-                  onEditProject={() => navigate(projectSettingsPath(tree.project.id))}
-                  onAddPrimary={() => openNewUnit(tree.project.id)}
-                  onToggleAssignedFilter={() => {
+                    onEditProject={() => navigate(projectSettingsPath(tree.project.id))}
+                    onAddPrimary={() => openNewUnit(tree.project.id)}
+                    onAddAI={() => void openAIAdd(tree.project.id, 'epic')}
+                    openAIConfigured={apiDocsConfig.openAIConfigured}
+                    onToggleAssignedFilter={() => {
                     setAssignedFilterOpen((current) => !current)
                     assignedFilterButtonRef.current?.blur()
                   }}
@@ -990,6 +1247,8 @@ export default function App() {
                   onChangeView={setBugsView}
                   onEditProject={() => navigate(projectSettingsPath(tree.project.id))}
                   onAddBug={() => openNewBug(tree.project.id)}
+                  onAddAIBug={() => void openAIAdd(tree.project.id, 'bug')}
+                  openAIConfigured={apiDocsConfig.openAIConfigured}
                   onOpenDetails={openUnitDetails}
                   onEditBug={openEditUnit}
                   onMoveBug={(unitId, status) => void moveUnit(unitId, status)}
@@ -1028,10 +1287,18 @@ export default function App() {
                       unitById={unitById}
                       onEditProject={() => navigate(projectSettingsPath(tree.project.id))}
                       onAddEpic={() => openNewUnit(tree.project.id)}
+                      onAddAIEpic={() => void openAIAdd(tree.project.id, 'epic')}
+                      openAIConfigured={apiDocsConfig.openAIConfigured}
                       onOpenRoute={openUnitRoute}
                       onOpenDetails={openUnitDetails}
                       onEditUnit={openEditUnit}
                       onCreateChild={(unit) => openNewUnit(tree.project.id, unit)}
+                      onCreateAIChild={(unit) => {
+                        const targetType = nextChildType[unit.type]
+                        if (targetType && canAIAddType(targetType)) {
+                          void openAIAdd(tree.project.id, targetType as 'feature' | 'story' | 'bug' | 'epic', unit.id)
+                        }
+                      }}
                       onMoveUnit={(unitId, status) => void moveUnit(unitId, status)}
                       onSaveComment={(event, unitId) => void saveComment(event, unitId)}
                       commentBody={commentBody}
@@ -1065,6 +1332,10 @@ export default function App() {
             <div class="flex justify-end gap-2">
               <button class="btn btn-ghost" type="button" onClick={() => setProjectModalOpen(false)}>
                 Cancel
+              </button>
+              <button class="btn btn-outline" type="button" title={aiDisabledReason('project', apiDocsConfig.openAIConfigured)} disabled={!apiDocsConfig.openAIConfigured} onClick={() => void openProjectDraftAI()}>
+                <Sparkles size={16} />
+                AI Add
               </button>
               <button class="btn btn-primary" type="submit">
                 <Plus size={16} />
@@ -1175,6 +1446,21 @@ export default function App() {
         </Modal>
       )}
 
+      {aiAddModal && (
+        <Modal title={aiAddModal.context.title} onClose={() => setAIAddModal(null)} wide>
+          <AIAddModalContent
+            modal={aiAddModal}
+            onChange={setAIAddModal}
+            onSubmit={() => void submitAIAdd()}
+            onApply={() => void applyAIAdd(false)}
+            onDone={() => void applyAIAdd(true)}
+            onToggleAccepted={toggleAIProposalAccepted}
+            onToggleEditing={toggleAIProposalEditing}
+            onUpdateProposal={updateAIProposal}
+          />
+        </Modal>
+      )}
+
       {modalUnit && (
         <Modal title={modalUnit.title} onClose={closeUnitDetails} wide>
           <UnitDetailContent
@@ -1188,6 +1474,12 @@ export default function App() {
             onSaveComment={(event) => void saveComment(event, modalUnit.id)}
             onEdit={() => openEditUnit(modalUnit)}
             onCreateChild={nextChildType[modalUnit.type] ? () => openNewUnit(modalUnit.projectId, modalUnit) : undefined}
+            onCreateAIChild={
+              nextChildType[modalUnit.type] && canAIAddType(nextChildType[modalUnit.type] as string)
+                ? () => void openAIAdd(modalUnit.projectId, nextChildType[modalUnit.type] as 'feature' | 'story' | 'bug' | 'epic', modalUnit.id)
+                : undefined
+            }
+            openAIConfigured={apiDocsConfig.openAIConfigured}
           />
         </Modal>
       )}
@@ -1195,7 +1487,7 @@ export default function App() {
   )
 }
 
-function ProjectDirectory(props: { projects: Project[]; onCreate: () => void; onOpen: (projectId: string) => void }) {
+function ProjectDirectory(props: { projects: Project[]; onCreate: () => void; onCreateAI: () => void; openAIConfigured: boolean; onOpen: (projectId: string) => void }) {
   return (
     <section class="space-y-5">
       <header class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
@@ -1208,6 +1500,10 @@ function ProjectDirectory(props: { projects: Project[]; onCreate: () => void; on
           <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={props.onCreate} title="Create project" aria-label="Create project">
             <Plus size={16} />
             <span class="sr-only">Create project</span>
+          </button>
+          <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={props.onCreateAI} title={aiDisabledReason('project', props.openAIConfigured)} aria-label="AI Add project" disabled={!props.openAIConfigured}>
+            <Sparkles size={16} />
+            <span class="sr-only">AI Add project</span>
           </button>
         </div>
       </header>
@@ -1237,7 +1533,7 @@ function ProjectDirectory(props: { projects: Project[]; onCreate: () => void; on
   )
 }
 
-function ProjectHero(props: { project: Project; tags: string[]; onEdit: () => void; onAddPrimary: () => void; addLabel: string; addTitle: string }) {
+function ProjectHero(props: { project: Project; tags: string[]; onEdit: () => void; onAddPrimary: () => void; onAddAI: () => void; openAIConfigured: boolean; addLabel: string; addTitle: string; aiTitle: string; aiTargetType: string }) {
   return (
     <header class="mb-5 rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
       <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -1257,6 +1553,10 @@ function ProjectHero(props: { project: Project; tags: string[]; onEdit: () => vo
           <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={props.onEdit} title="Edit project" aria-label="Edit project">
             <Pencil size={16} />
             <span class="sr-only">Edit project</span>
+          </button>
+          <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={props.onAddAI} title={aiDisabledReason(props.aiTargetType, props.openAIConfigured) || props.aiTitle} aria-label={props.aiTitle} disabled={!props.openAIConfigured || !canAIAddType(props.aiTargetType)}>
+            <Sparkles size={16} />
+            <span class="sr-only">{props.aiTitle}</span>
           </button>
           <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={props.onAddPrimary} title={props.addTitle} aria-label={props.addTitle}>
             <Plus size={16} />
@@ -1278,6 +1578,8 @@ function ProjectDashboardPage(props: {
   assignedTypes: UnitType[]
   onEditProject: () => void
   onAddPrimary: () => void
+  onAddAI: () => void
+  openAIConfigured: boolean
   onToggleAssignedFilter: () => void
   onAssignedTypesChange: (types: UnitType[]) => void
   assignedFilterRef: { current: HTMLDivElement | null }
@@ -1305,7 +1607,7 @@ function ProjectDashboardPage(props: {
 
   return (
     <section class="space-y-5">
-      <ProjectHero project={props.project} tags={props.project.tags} onEdit={props.onEditProject} onAddPrimary={props.onAddPrimary} addLabel="Add epic" addTitle="Add epic" />
+      <ProjectHero project={props.project} tags={props.project.tags} onEdit={props.onEditProject} onAddPrimary={props.onAddPrimary} onAddAI={props.onAddAI} openAIConfigured={props.openAIConfigured} addLabel="Add epic" addTitle="Add epic" aiTitle="AI Add epics" aiTargetType="epic" />
 
       <section class="grid gap-4 xl:grid-cols-[1.1fr,0.9fr]">
         <div class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
@@ -1597,13 +1899,15 @@ function BugsPage(props: {
   onChangeView: (view: 'list' | 'kanban') => void
   onEditProject: () => void
   onAddBug: () => void
+  onAddAIBug: () => void
+  openAIConfigured: boolean
   onOpenDetails: (unit: Unit) => void
   onEditBug: (unit: Unit) => void
   onMoveBug: (unitId: string, status: UnitStatus) => void
 }) {
   return (
     <section class="space-y-5">
-      <ProjectHero project={props.project} tags={props.project.tags} onEdit={props.onEditProject} onAddPrimary={props.onAddBug} addLabel="Add bug" addTitle="Add bug" />
+      <ProjectHero project={props.project} tags={props.project.tags} onEdit={props.onEditProject} onAddPrimary={props.onAddBug} onAddAI={props.onAddAIBug} openAIConfigured={props.openAIConfigured} addLabel="Add bug" addTitle="Add bug" aiTitle="AI Add bugs" aiTargetType="bug" />
       <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-4 shadow-panel">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -1696,10 +2000,13 @@ function KanbanRoutePage(props: {
   unitById: Record<string, Unit>
   onEditProject: () => void
   onAddEpic: () => void
+  onAddAIEpic: () => void
+  openAIConfigured: boolean
   onOpenRoute: (unit: Unit) => void
   onOpenDetails: (unit: Unit) => void
   onEditUnit: (unit: Unit) => void
   onCreateChild: (unit: Unit) => void
+  onCreateAIChild: (unit: Unit) => void
   onMoveUnit: (unitId: string, status: UnitStatus) => void
   onSaveComment: (event: Event, unitId: string) => void
   commentBody: string
@@ -1734,6 +2041,12 @@ function KanbanRoutePage(props: {
                   <span class="sr-only">{`Edit ${typeLabels[currentUnit.type]}`}</span>
                 </button>
                 {nextChildType[currentUnit.type] && (
+                  <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={() => props.onCreateAIChild(currentUnit)} title={aiDisabledReason(nextChildType[currentUnit.type] as string, props.openAIConfigured) || `AI Add ${typeLabels[nextChildType[currentUnit.type] as UnitType]}`} aria-label={`AI Add ${typeLabels[nextChildType[currentUnit.type] as UnitType]}`} disabled={!props.openAIConfigured || !canAIAddType(nextChildType[currentUnit.type] as string)}>
+                    <Sparkles size={16} />
+                    <span class="sr-only">{`AI Add ${typeLabels[nextChildType[currentUnit.type] as UnitType]}`}</span>
+                  </button>
+                )}
+                {nextChildType[currentUnit.type] && (
                   <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={() => props.onCreateChild(currentUnit)} title={`Add ${typeLabels[nextChildType[currentUnit.type] as UnitType]}`} aria-label={`Add ${typeLabels[nextChildType[currentUnit.type] as UnitType]}`}>
                     <Plus size={16} />
                     <span class="sr-only">{`Add ${typeLabels[nextChildType[currentUnit.type] as UnitType]}`}</span>
@@ -1759,7 +2072,7 @@ function KanbanRoutePage(props: {
           </section>
         </>
       ) : (
-        <ProjectHero project={props.project} tags={props.allTags} onEdit={props.onEditProject} onAddPrimary={props.onAddEpic} addLabel="Add epic" addTitle="Add epic" />
+        <ProjectHero project={props.project} tags={props.allTags} onEdit={props.onEditProject} onAddPrimary={props.onAddEpic} onAddAI={props.onAddAIEpic} openAIConfigured={props.openAIConfigured} addLabel="Add epic" addTitle="Add epic" aiTitle="AI Add epics" aiTargetType="epic" />
       )}
 
       {!taskUnit && (
@@ -1886,6 +2199,8 @@ function UnitDetailContent(props: {
   onSaveComment: (event: Event) => void
   onEdit?: () => void
   onCreateChild?: () => void
+  onCreateAIChild?: () => void
+  openAIConfigured?: boolean
   hideActions?: boolean
   hideComments?: boolean
 }) {
@@ -1911,6 +2226,12 @@ function UnitDetailContent(props: {
             <button class="btn btn-primary btn-sm" onClick={props.onEdit}>
               <Pencil size={16} />
               Edit item
+            </button>
+          )}
+          {props.onCreateChild && (
+            <button class="btn btn-outline btn-sm" onClick={props.onCreateAIChild} title={aiDisabledReason(props.unit.type === 'epic' ? 'feature' : props.unit.type === 'feature' ? 'story' : props.unit.type === 'story' ? 'task' : '', props.openAIConfigured ?? false)} disabled={!props.onCreateAIChild || !props.openAIConfigured}>
+              <Sparkles size={16} />
+              AI Add
             </button>
           )}
           {props.onCreateChild && (
@@ -2038,6 +2359,169 @@ function ValueCard(props: { title: string; body: string }) {
       <h3 class="text-sm font-bold">{props.title}</h3>
       <p class="mt-1.5 text-xs text-base-content/82">{props.body}</p>
     </div>
+  )
+}
+
+function AIAddModalContent(props: {
+  modal: AIAddModalState
+  onChange: (next: AIAddModalState | null) => void
+  onSubmit: () => void
+  onApply: () => void
+  onDone: () => void
+  onToggleAccepted: (proposalId: string) => void
+  onToggleEditing: (proposalId: string) => void
+  onUpdateProposal: (proposalId: string, patch: Partial<AIPlanProposal>) => void
+}) {
+  const sessionMessages = props.modal.context.mode === 'session' ? props.modal.session?.messages || [] : []
+  const draftMessages = props.modal.context.mode === 'project-draft' ? props.modal.draftMessages : []
+  const allMessages = props.modal.context.mode === 'project-draft' ? draftMessages : sessionMessages
+  const proposals = props.modal.context.mode === 'session' ? props.modal.session?.proposals || [] : []
+
+  return (
+    <div class="grid gap-5 xl:grid-cols-[0.95fr,1.05fr]">
+      <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
+        <div>
+          <h3 class="text-lg font-bold">Conversation</h3>
+          <p class="mt-1 text-sm text-base-content/80">Ask for the outcome you want, then answer the AI’s questions one at a time.</p>
+        </div>
+
+        {props.modal.context.mode === 'session' && props.modal.session?.hasHistory && !allMessages.length && (
+          <div class="rounded-xl border border-base-300 bg-base-200/40 p-3 text-sm text-base-content/82">Previous planning context has been loaded from the saved summary for this parent.</div>
+        )}
+
+        <div class="max-h-[420px] space-y-3 overflow-auto rounded-xl border border-base-300 bg-base-200/30 p-3">
+          {!allMessages.length && <div class="text-sm text-base-content/75">No conversation yet.</div>}
+          {allMessages.map((message) => (
+            <article class={`rounded-xl border p-3 ${message.role === 'assistant' ? 'border-primary/30 bg-primary/5' : 'border-base-300 bg-base-100'}`}>
+              <div class="text-[11px] font-semibold uppercase tracking-[0.2em] text-base-content/65">{message.role === 'assistant' ? 'Assistant' : 'You'}</div>
+              <div class="mt-2 text-sm text-base-content/90 whitespace-pre-wrap">{message.content}</div>
+            </article>
+          ))}
+        </div>
+
+        {props.modal.context.includeGrandchildrenAllowed && (
+          <label class="flex items-center gap-3 rounded-xl border border-base-300 bg-base-100 p-3 text-sm">
+            <input
+              type="checkbox"
+              class="checkbox checkbox-sm"
+              checked={props.modal.includeGrandchildren}
+              onChange={(event) => props.onChange({ ...props.modal, includeGrandchildren: (event.currentTarget as HTMLInputElement).checked })}
+            />
+            <span>Include grandchildren</span>
+          </label>
+        )}
+
+        <Field label="What do you need?">
+          <textarea
+            class="textarea textarea-bordered min-h-32 w-full"
+            value={props.modal.input}
+            onInput={(event) => props.onChange({ ...props.modal, input: (event.currentTarget as HTMLTextAreaElement).value })}
+            placeholder={props.modal.context.mode === 'project-draft' ? 'Describe the project you want to shape.' : 'Describe the items you want the AI to help flesh out.'}
+          />
+        </Field>
+
+        <div class="flex justify-end">
+          <button class="btn btn-primary gap-2" type="button" disabled={props.modal.loading || !props.modal.input.trim()} onClick={props.onSubmit}>
+            <Sparkles size={16} />
+            {props.modal.loading ? 'Thinking…' : props.modal.context.submitLabel}
+          </button>
+        </div>
+      </section>
+
+      <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
+        <div>
+          <h3 class="text-lg font-bold">Review</h3>
+          <p class="mt-1 text-sm text-base-content/80">Accept what works, reject what does not, and edit any draft inline before saving.</p>
+        </div>
+
+        {props.modal.context.mode === 'project-draft' ? (
+          <div class="space-y-4">
+            <Field label="Project name">
+              <input class="input input-bordered w-full" value={props.modal.draftProject.name} onInput={(event) => props.onChange({ ...props.modal, draftProject: { ...props.modal.draftProject, name: (event.currentTarget as HTMLInputElement).value } })} />
+            </Field>
+            <Field label="Description">
+              <textarea class="textarea textarea-bordered min-h-32 w-full" value={props.modal.draftProject.description} onInput={(event) => props.onChange({ ...props.modal, draftProject: { ...props.modal.draftProject, description: (event.currentTarget as HTMLTextAreaElement).value } })} />
+            </Field>
+            <TagEditor tags={props.modal.draftProject.tags} suggestions={[]} onChange={(tags) => props.onChange({ ...props.modal, draftProject: { ...props.modal.draftProject, tags } })} />
+            <div class="flex justify-end gap-2 border-t border-base-300 pt-4">
+              <button class="btn btn-outline" type="button" onClick={() => props.onChange(null)}>
+                Cancel
+              </button>
+              <button class="btn btn-primary" type="button" onClick={props.onApply}>
+                Use project draft
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div class="space-y-4">
+            {!proposals.length && <div class="rounded-xl border border-dashed border-base-300 p-4 text-sm text-base-content/75">The review list will appear once the AI has enough information to draft items.</div>}
+            {proposals.map((proposal) => (
+              <AIProposalEditor
+                key={proposal.id}
+                proposal={proposal}
+                accepted={props.modal.acceptedProposalIds.includes(proposal.id)}
+                editing={props.modal.editingProposalIds.includes(proposal.id)}
+                onToggleAccepted={() => props.onToggleAccepted(proposal.id)}
+                onToggleEditing={() => props.onToggleEditing(proposal.id)}
+                onUpdate={(patch) => props.onUpdateProposal(proposal.id, patch)}
+              />
+            ))}
+            <div class="flex justify-end gap-2 border-t border-base-300 pt-4">
+              <button class="btn btn-outline" type="button" disabled={props.modal.loading} onClick={props.onDone}>
+                Done
+              </button>
+              <button class="btn btn-primary" type="button" disabled={props.modal.loading || !props.modal.acceptedProposalIds.length} onClick={props.onApply}>
+                Apply selected
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+    </div>
+  )
+}
+
+function AIProposalEditor(props: {
+  proposal: AIPlanProposal
+  accepted: boolean
+  editing: boolean
+  onToggleAccepted: () => void
+  onToggleEditing: () => void
+  onUpdate: (patch: Partial<AIPlanProposal>) => void
+}) {
+  return (
+    <article class={`rounded-xl border p-4 ${props.accepted ? 'border-primary/40 bg-primary/5' : 'border-base-300 bg-base-100'}`}>
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-2">
+          <span class="badge badge-outline border-base-content/40 text-base-content">{typeLabels[props.proposal.type]}</span>
+          <span class="text-sm font-semibold">{props.proposal.title}</span>
+        </div>
+        <div class="flex gap-2">
+          <button class={`btn btn-xs ${props.accepted ? 'btn-primary' : 'btn-outline'}`} type="button" onClick={props.onToggleAccepted}>
+            {props.accepted ? 'Accepted' : 'Accept'}
+          </button>
+          <button class="btn btn-outline btn-xs" type="button" onClick={props.onToggleEditing}>
+            {props.editing ? 'Close edit' : 'Edit'}
+          </button>
+        </div>
+      </div>
+      {props.editing ? (
+        <div class="mt-4 space-y-3">
+          <Field label="Title">
+            <input class="input input-bordered w-full" value={props.proposal.title} onInput={(event) => props.onUpdate({ title: (event.currentTarget as HTMLInputElement).value })} />
+          </Field>
+          <Field label="Description">
+            <textarea class="textarea textarea-bordered min-h-28 w-full" value={props.proposal.description} onInput={(event) => props.onUpdate({ description: (event.currentTarget as HTMLTextAreaElement).value })} />
+          </Field>
+          <TagEditor tags={props.proposal.tags} suggestions={[]} onChange={(tags) => props.onUpdate({ tags })} />
+        </div>
+      ) : (
+        <div class="mt-3 text-sm text-base-content/85">
+          <div class="line-clamp-3">{plainText(props.proposal.description) || 'No description yet.'}</div>
+          {!!props.proposal.children?.length && <div class="mt-2 text-xs text-base-content/70">{props.proposal.children.length} child items included</div>}
+        </div>
+      )}
+    </article>
   )
 }
 
@@ -2209,6 +2693,8 @@ function UnitTreeNode(props: {
   onOpenDetails: (unit: Unit) => void
   onEdit: (unit: Unit) => void
   onCreateChild: (unit: Unit) => void
+  onCreateAIChild: (unit: Unit) => void
+  openAIConfigured: boolean
 }) {
   const { node } = props
   const { unit, implicit, children } = node
@@ -2249,6 +2735,11 @@ function UnitTreeNode(props: {
               <Pencil size={14} />
             </button>
             {nextChildType[unit.type] && (
+              <button class="btn btn-outline btn-xs" onClick={() => props.onCreateAIChild(unit)} title={aiDisabledReason(nextChildType[unit.type] as string, props.openAIConfigured) || 'AI Add child'} aria-label="AI Add child" disabled={!props.openAIConfigured || !canAIAddType(nextChildType[unit.type] as string)}>
+                <Sparkles size={14} />
+              </button>
+            )}
+            {nextChildType[unit.type] && (
               <button class="btn btn-primary btn-xs" onClick={() => props.onCreateChild(unit)} title="Add child" aria-label="Add child">
                 <Plus size={14} />
               </button>
@@ -2268,7 +2759,7 @@ function UnitTreeNode(props: {
       {!!children.length && (
         <div class="mt-4 space-y-3 border-l-2 border-base-300 pl-4">
           {children.map((child) => (
-            <UnitTreeNode project={props.project} node={child} userById={props.userById} commentsByUnit={props.commentsByUnit} onOpenRoute={props.onOpenRoute} onOpenDetails={props.onOpenDetails} onEdit={props.onEdit} onCreateChild={props.onCreateChild} />
+            <UnitTreeNode project={props.project} node={child} userById={props.userById} commentsByUnit={props.commentsByUnit} onOpenRoute={props.onOpenRoute} onOpenDetails={props.onOpenDetails} onEdit={props.onEdit} onCreateChild={props.onCreateChild} onCreateAIChild={props.onCreateAIChild} openAIConfigured={props.openAIConfigured} />
           ))}
         </div>
       )}
@@ -2431,13 +2922,6 @@ function ApiDocsPage(props: { project: Project; projects: Project[]; units: Unit
       description: 'Create a markdown comment with optional mentions.',
       variables: [{ label: 'Item', type: 'unit' as const }],
       curl: `curl -X POST ${base}/units/${selectedUnit?.id || '<unit_id>'}/comments \\\n  -H "${props.docsConfig.headerName}: ${props.docsConfig.apiKey || '<agilerr_api_key>'}" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "body": "Looks good from API docs."\n  }'`,
-    },
-    {
-      key: 'smart-add',
-      method: 'POST',
-      path: `${base}/smart-add`,
-      description: 'Refine a draft item using the configured OpenAI endpoint.',
-      curl: `curl -X POST ${base}/smart-add \\\n  -H "${props.docsConfig.headerName}: ${props.docsConfig.apiKey || '<agilerr_api_key>'}" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "unitType": "story",\n    "title": "Tighten login flow",\n    "description": "Make the login flow clearer for new users",\n    "messages": []\n  }'`,
     },
   ]
 
@@ -2719,6 +3203,21 @@ function PriorityBadge(props: { priority?: string }) {
           ? 'badge-info'
           : 'badge-ghost'
   return <span class={`badge ${badgeClass}`}>{label}</span>
+}
+
+function updateAIProposalTree(proposals: AIPlanProposal[], proposalId: string, patch: Partial<AIPlanProposal>): AIPlanProposal[] {
+  return proposals.map((proposal) => {
+    if (proposal.id === proposalId) {
+      return {
+        ...proposal,
+        ...patch,
+      }
+    }
+    return {
+      ...proposal,
+      children: proposal.children ? updateAIProposalTree(proposal.children, proposalId, patch) : proposal.children,
+    }
+  })
 }
 
 function parseRoute(pathname: string): AppRoute {

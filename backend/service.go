@@ -1,15 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"crypto/md5"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -76,12 +71,15 @@ func (s *AgilerrService) RegisterRoutes(e *core.ServeEvent) {
 	group.PATCH("/projects/{projectId}", s.handleProjectUpdate)
 	group.GET("/projects/{projectId}/suggest", s.handleSuggestions)
 	group.POST("/projects/{projectId}/units", s.handleUnitCreate)
+	group.POST("/ai-plans/project-draft", s.handleProjectDraftAI)
+	group.POST("/projects/{projectId}/ai-plans/open", s.handleAIPlanOpen)
+	group.POST("/ai-plans/{sessionId}/message", s.handleAIPlanMessage)
+	group.POST("/ai-plans/{sessionId}/apply", s.handleAIPlanApply)
 	group.PATCH("/units/{unitId}", s.handleUnitUpdate)
 	group.POST("/units/{unitId}/move", s.handleUnitMove)
 	group.DELETE("/units/{unitId}", s.handleUnitDelete)
 	group.GET("/units/{unitId}/comments", s.handleCommentsList)
 	group.POST("/units/{unitId}/comments", s.handleCommentCreate)
-	group.POST("/smart-add", s.handleSmartAdd)
 }
 
 func (s *AgilerrService) requireAPIAccess(e *core.RequestEvent) error {
@@ -123,10 +121,11 @@ func (s *AgilerrService) handleMe(e *core.RequestEvent) error {
 func (s *AgilerrService) handleDocsConfig(e *core.RequestEvent) error {
 	apiKey := strings.TrimSpace(s.config.APIKey)
 	return e.JSON(http.StatusOK, map[string]any{
-		"configured":   apiKey != "",
-		"headerName":   "X-API-Key",
-		"apiKey":       apiKey,
-		"apiKeyMasked": maskSecret(apiKey),
+		"configured":       apiKey != "",
+		"headerName":       "X-API-Key",
+		"apiKey":           apiKey,
+		"apiKeyMasked":     maskSecret(apiKey),
+		"openAIConfigured": strings.TrimSpace(s.config.OpenAIAPIKey) != "",
 	})
 }
 
@@ -579,115 +578,6 @@ func (s *AgilerrService) handleSuggestions(e *core.RequestEvent) error {
 		"users": users,
 		"tags":  tags,
 	})
-}
-
-func (s *AgilerrService) handleSmartAdd(e *core.RequestEvent) error {
-	var req SmartAddRequest
-	if err := e.BindBody(&req); err != nil {
-		return badRequest(e, "invalid request body", err)
-	}
-
-	result, err := s.runSmartAdd(req)
-	if err != nil {
-		return e.JSON(http.StatusServiceUnavailable, map[string]any{
-			"error": err.Error(),
-		})
-	}
-
-	return e.JSON(http.StatusOK, result)
-}
-
-func (s *AgilerrService) runSmartAdd(req SmartAddRequest) (SmartAddResponse, error) {
-	if strings.TrimSpace(s.config.OpenAIAPIKey) == "" {
-		return SmartAddResponse{}, errors.New("smart add is not configured because OPENAI_API_KEY is missing")
-	}
-
-	type chatMessage struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
-	payload := struct {
-		Model       string        `json:"model"`
-		Temperature float64       `json:"temperature"`
-		Messages    []chatMessage `json:"messages"`
-	}{
-		Model:       s.config.OpenAIModel,
-		Temperature: 0.3,
-		Messages: []chatMessage{
-			{
-				Role:    "system",
-				Content: "You help shape Agile backlog items. Reply with JSON only using keys: ready, assistantMessage, suggestedTitle, suggestedDescription. Ask concise clarification questions until the item is actionable. When enough context exists, set ready=true and return polished markdown-friendly title and description.",
-			},
-			{
-				Role:    "user",
-				Content: fmt.Sprintf("Unit type: %s\nCurrent title: %s\nCurrent description:\n%s", req.UnitType, req.Title, req.Description),
-			},
-		},
-	}
-
-	for _, msg := range req.Messages {
-		payload.Messages = append(payload.Messages, chatMessage{
-			Role:    msg.Role,
-			Content: msg.Content,
-		})
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return SmartAddResponse{}, err
-	}
-
-	endpoint, err := url.JoinPath(strings.TrimRight(s.config.OpenAIBaseURL, "/"), "/v1/chat/completions")
-	if err != nil {
-		return SmartAddResponse{}, err
-	}
-
-	httpReq, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return SmartAddResponse{}, err
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+s.config.OpenAIAPIKey)
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := s.httpClient.Do(httpReq)
-	if err != nil {
-		return SmartAddResponse{}, err
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return SmartAddResponse{}, err
-	}
-	if resp.StatusCode >= 300 {
-		return SmartAddResponse{}, fmt.Errorf("smart add request failed: %s", strings.TrimSpace(string(raw)))
-	}
-
-	var parsed struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return SmartAddResponse{}, err
-	}
-	if len(parsed.Choices) == 0 {
-		return SmartAddResponse{}, errors.New("smart add returned no choices")
-	}
-
-	content := strings.TrimSpace(parsed.Choices[0].Message.Content)
-	content = strings.TrimPrefix(content, "```json")
-	content = strings.TrimPrefix(content, "```")
-	content = strings.TrimSuffix(content, "```")
-	content = strings.TrimSpace(content)
-
-	var result SmartAddResponse
-	if err := json.Unmarshal([]byte(content), &result); err != nil {
-		return SmartAddResponse{}, fmt.Errorf("smart add returned invalid JSON: %w", err)
-	}
-	return result, nil
 }
 
 func (s *AgilerrService) syncProjectItemColors(projectRecord *core.Record) error {

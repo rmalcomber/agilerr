@@ -1,5 +1,5 @@
 import { pb } from './pocketbase'
-import type { ApiDocsConfig, Comment, Project, ProjectTree, SmartAddMessage, Suggestions, Unit, User } from '../types'
+import type { AIPlanProposal, AIPlanState, AIProjectDraft, AIPlanChatMessage, ApiDocsConfig, Comment, Project, ProjectTree, Suggestions, Unit, User } from '../types'
 
 const apiBase = import.meta.env.VITE_API_URL || ''
 
@@ -63,8 +63,23 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  smartAdd: (body: { unitType: string; title: string; description: string; messages: SmartAddMessage[] }) =>
-    request<{ ready: boolean; assistantMessage: string; suggestedTitle: string; suggestedDescription: string }>('/api/agilerr/smart-add', {
+  aiProjectDraft: (body: { prompt: string; draft: AIProjectDraft; messages: AIPlanChatMessage[] }) =>
+    request<{ assistantMessage: string; ready: boolean; projectDraft?: AIProjectDraft }>('/api/agilerr/ai-plans/project-draft', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  openAIPlan: (projectId: string, body: { contextUnitId?: string; targetType: 'epic' | 'feature' | 'story' | 'bug'; includeGrandchildren: boolean }) =>
+    request<AIPlanState>(`/api/agilerr/projects/${projectId}/ai-plans/open`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  sendAIPlanMessage: (sessionId: string, body: { message: string; includeGrandchildren: boolean }) =>
+    request<AIPlanState>(`/api/agilerr/ai-plans/${sessionId}/message`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  applyAIPlan: (sessionId: string, body: { proposals: AIPlanProposal[]; acceptedProposalIds: string[]; done: boolean }) =>
+    request<{ created: Unit[]; state: AIPlanState }>(`/api/agilerr/ai-plans/${sessionId}/apply`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),

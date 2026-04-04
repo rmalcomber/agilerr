@@ -13,10 +13,12 @@ import (
 )
 
 const (
-	collectionUsers    = "users"
-	collectionProjects = "projects"
-	collectionUnits    = "units"
-	collectionComments = "comments"
+	collectionUsers          = "users"
+	collectionProjects       = "projects"
+	collectionUnits          = "units"
+	collectionComments       = "comments"
+	collectionAIPlanSessions = "ai_plan_sessions"
+	collectionAIPlanMessages = "ai_plan_messages"
 )
 
 var (
@@ -137,25 +139,6 @@ type CreateCommentRequest struct {
 	Mentions []Mention `json:"mentions"`
 }
 
-type SmartAddMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type SmartAddRequest struct {
-	UnitType    string            `json:"unitType"`
-	Title       string            `json:"title"`
-	Description string            `json:"description"`
-	Messages    []SmartAddMessage `json:"messages"`
-}
-
-type SmartAddResponse struct {
-	Ready                bool   `json:"ready"`
-	AssistantMessage     string `json:"assistantMessage"`
-	SuggestedTitle       string `json:"suggestedTitle"`
-	SuggestedDescription string `json:"suggestedDescription"`
-}
-
 func normalizeTags(tags []string) []string {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(tags))
@@ -207,7 +190,7 @@ func validateUnitPayload(req SaveUnitRequest) error {
 		return fmt.Errorf("invalid status %q", req.Status)
 	}
 	if req.Type == "bug" {
-		if !contains(bugPriorities, req.Priority) {
+		if req.Priority != "" && !contains(bugPriorities, req.Priority) {
 			return fmt.Errorf("invalid priority %q", req.Priority)
 		}
 		return nil

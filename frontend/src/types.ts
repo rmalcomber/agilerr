@@ -81,6 +81,62 @@ export interface ApiDocsConfig {
   headerName: string
   apiKey: string
   apiKeyMasked: string
+  openAIConfigured: boolean
 }
 
 export type ProjectPage = 'dashboard' | 'backlog' | 'kanban' | 'bugs' | 'api' | 'settings'
+
+export interface AIPlanMessage {
+  id: string
+  sessionId: string
+  role: 'user' | 'assistant'
+  content: string
+  created: string
+  updated: string
+}
+
+export interface AIPlanChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface AIPlanProposal {
+  id: string
+  type: 'epic' | 'feature' | 'story' | 'bug'
+  title: string
+  description: string
+  tags: string[]
+  children?: AIPlanProposal[]
+}
+
+export interface AIProjectDraft {
+  name: string
+  description: string
+  tags: string[]
+}
+
+export interface AIPlanSession {
+  id: string
+  projectId: string
+  contextType: string
+  contextId: string
+  targetType: 'project' | 'epic' | 'feature' | 'story' | 'bug'
+  includeGrandchildren: boolean
+  status: 'active' | 'done'
+  summary: string
+  latestAssistant: string
+  projectDraft?: AIProjectDraft
+  proposals: AIPlanProposal[]
+  created: string
+  updated: string
+}
+
+export interface AIPlanState {
+  session?: AIPlanSession
+  messages: AIPlanMessage[]
+  projectDraft?: AIProjectDraft
+  proposals: AIPlanProposal[]
+  assistantMessage: string
+  ready: boolean
+  hasHistory: boolean
+}
