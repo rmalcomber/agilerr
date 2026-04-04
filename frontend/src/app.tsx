@@ -1,5 +1,18 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useMemo, useState } from 'preact/hooks'
+import {
+  BookOpen,
+  ChevronDown,
+  ChevronRight,
+  ChevronsUpDown,
+  FolderKanban,
+  LayoutGrid,
+  LogOut,
+  Pencil,
+  Plus,
+  SquarePen,
+  X,
+} from 'lucide-preact'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import md5 from 'blueimp-md5'
@@ -542,7 +555,10 @@ export default function App() {
             <details class="dropdown w-full">
               <summary class="btn btn-outline btn-sm h-10 min-h-10 w-full justify-between">
                 <span class="truncate">{selectedProject?.name || 'Select a project'}</span>
-                <span class="text-xs text-base-content/70">{projects.length} total</span>
+                <span class="inline-flex items-center gap-2 text-xs text-base-content/70">
+                  <span>{projects.length} total</span>
+                  <ChevronsUpDown size={14} />
+                </span>
               </summary>
               <ul class="menu dropdown-content z-20 mt-2 w-full rounded-box border border-base-300 bg-base-100 p-2 shadow">
                 {projects.map((project) => (
@@ -569,21 +585,25 @@ export default function App() {
             <ul class="menu rounded-box bg-base-100/75 p-2">
               <li>
                 <button class={route.kind === 'root' ? 'active' : ''} onClick={() => navigate('/')}>
+                  <LayoutGrid size={16} />
                   Projects
                 </button>
               </li>
               <li>
                 <button class={activePage === 'kanban' ? 'active' : ''} disabled={!selectedProjectId} onClick={() => selectedProjectId && navigate(projectKanbanPath(selectedProjectId))}>
+                  <FolderKanban size={16} />
                   Kanban
                 </button>
               </li>
               <li>
                 <button class={activePage === 'backlog' ? 'active' : ''} disabled={!selectedProjectId} onClick={() => selectedProjectId && navigate(projectBacklogPath(selectedProjectId))}>
+                  <BookOpen size={16} />
                   Backlog
                 </button>
               </li>
               <li>
                 <button class={activePage === 'api' ? 'active' : ''} disabled={!selectedProjectId} onClick={() => selectedProjectId && navigate(projectApiPath(selectedProjectId))}>
+                  <SquarePen size={16} />
                   API
                 </button>
               </li>
@@ -599,6 +619,7 @@ export default function App() {
               </div>
             </div>
             <button class="btn btn-outline btn-sm mt-3 h-9 min-h-9 w-full" onClick={() => pb.authStore.clear()}>
+              <LogOut size={16} />
               Log out
             </button>
           </div>
@@ -660,6 +681,7 @@ export default function App() {
                       <h2 class="text-lg font-bold">Unit path not found</h2>
                       <p class="mt-2 text-sm text-base-content/85">This link does not match the current project hierarchy.</p>
                       <button class="btn btn-primary btn-sm mt-4" onClick={() => navigate(projectKanbanPath(tree.project.id), true)}>
+                        <FolderKanban size={16} />
                         Back to project board
                       </button>
                     </div>
@@ -713,6 +735,7 @@ export default function App() {
                 Cancel
               </button>
               <button class="btn btn-primary" type="submit">
+                <Plus size={16} />
                 Create project
               </button>
             </div>
@@ -738,6 +761,7 @@ export default function App() {
                 Cancel
               </button>
               <button class="btn btn-primary" type="submit">
+                <SquarePen size={16} />
                 Save project
               </button>
             </div>
@@ -805,6 +829,7 @@ export default function App() {
                   <div class="mb-3 flex items-center justify-between">
                     <h3 class="font-semibold">Smart Add</h3>
                     <button class="btn btn-outline btn-sm" type="button" onClick={() => setSmartAddOpen((current) => !current)}>
+                      {smartAddOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                       {smartAddOpen ? 'Hide' : 'Open'}
                     </button>
                   </div>
@@ -852,6 +877,7 @@ export default function App() {
             <div class="flex flex-wrap justify-between gap-2">
               {unitEditor.id ? (
                 <button class="btn btn-error btn-outline" type="button" onClick={() => void deleteUnit(unitEditor.id!)}>
+                  <X size={16} />
                   Delete unit
                 </button>
               ) : (
@@ -862,6 +888,7 @@ export default function App() {
                   Cancel
                 </button>
                 <button class="btn btn-primary" type="submit">
+                  <SquarePen size={16} />
                   Save unit
                 </button>
               </div>
@@ -900,8 +927,9 @@ function ProjectDirectory(props: { projects: Project[]; onCreate: () => void; on
             <h2 class="mt-2 text-2xl font-black">Choose a workspace</h2>
             <p class="mt-2 max-w-2xl text-sm text-base-content/85">Select a project to jump into the kanban flow, or create a new one from here.</p>
           </div>
-          <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={props.onCreate}>
-            Create project
+          <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={props.onCreate} title="Create project" aria-label="Create project">
+            <Plus size={16} />
+            <span class="sr-only">Create project</span>
           </button>
         </div>
       </header>
@@ -948,11 +976,13 @@ function ProjectHero(props: { project: Project; tags: string[]; onEdit: () => vo
           </div>
         </div>
         <div class="flex flex-wrap gap-2">
-          <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={props.onEdit}>
-            Edit Project
+          <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={props.onEdit} title="Edit project" aria-label="Edit project">
+            <Pencil size={16} />
+            <span class="sr-only">Edit project</span>
           </button>
-          <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={props.onAddEpic}>
-            Add Epic
+          <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={props.onAddEpic} title="Add epic" aria-label="Add epic">
+            <Plus size={16} />
+            <span class="sr-only">Add epic</span>
           </button>
         </div>
       </div>
@@ -1003,12 +1033,14 @@ function KanbanRoutePage(props: {
                 </div>
               </div>
               <div class="flex flex-wrap gap-2">
-                <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={() => props.onEditUnit(currentUnit)}>
-                  Edit {typeLabels[currentUnit.type]}
+                <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={() => props.onEditUnit(currentUnit)} title={`Edit ${typeLabels[currentUnit.type]}`} aria-label={`Edit ${typeLabels[currentUnit.type]}`}>
+                  <Pencil size={16} />
+                  <span class="sr-only">{`Edit ${typeLabels[currentUnit.type]}`}</span>
                 </button>
                 {nextChildType[currentUnit.type] && (
-                  <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={() => props.onCreateChild(currentUnit)}>
-                    Add {typeLabels[nextChildType[currentUnit.type] as UnitType]}
+                  <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={() => props.onCreateChild(currentUnit)} title={`Add ${typeLabels[nextChildType[currentUnit.type] as UnitType]}`} aria-label={`Add ${typeLabels[nextChildType[currentUnit.type] as UnitType]}`}>
+                    <Plus size={16} />
+                    <span class="sr-only">{`Add ${typeLabels[nextChildType[currentUnit.type] as UnitType]}`}</span>
                   </button>
                 )}
               </div>
@@ -1171,11 +1203,13 @@ function UnitDetailContent(props: {
         <div class="flex flex-wrap gap-2">
           {props.onEdit && (
             <button class="btn btn-primary btn-sm" onClick={props.onEdit}>
+              <Pencil size={16} />
               Edit unit
             </button>
           )}
           {props.onCreateChild && (
             <button class="btn btn-outline btn-sm" onClick={props.onCreateChild}>
+              <Plus size={16} />
               Add child
             </button>
           )}
@@ -1273,8 +1307,8 @@ function Modal(props: { title: string; onClose: () => void; wide?: boolean; chil
       <div class={`mt-6 w-full rounded-[1.25rem] border border-base-300 bg-base-100 p-5 shadow-panel ${props.wide ? 'max-w-6xl' : 'max-w-2xl'}`}>
         <div class="mb-4 flex items-center justify-between gap-4">
           <h2 class="text-xl font-black">{props.title}</h2>
-          <button class="btn btn-ghost btn-sm h-8 min-h-8" onClick={props.onClose}>
-            Close
+          <button class="btn btn-ghost btn-sm h-8 min-h-8" onClick={props.onClose} title="Close" aria-label="Close">
+            <X size={16} />
           </button>
         </div>
         {props.children}
@@ -1326,6 +1360,7 @@ function TagEditor(props: { tags: string[]; suggestions: string[]; onChange: (ta
             setDraft('')
           }}
         >
+          <Plus size={16} />
           Add
         </button>
       </div>
@@ -1390,8 +1425,12 @@ function CollapsibleMarkdown(props: { title: string; source: string }) {
           <div class="font-semibold">{props.title}</div>
           <div class="mt-1 line-clamp-2 text-sm text-base-content/82">{preview || 'No description yet.'}</div>
         </div>
-        <span class="mt-0.5 text-xs font-semibold uppercase tracking-[0.2em] text-base-content/70 group-open:hidden">Expand</span>
-        <span class="mt-0.5 hidden text-xs font-semibold uppercase tracking-[0.2em] text-base-content/70 group-open:block">Collapse</span>
+        <div class="tooltip tooltip-left" data-tip={preview ? 'Expand description' : 'Show description'}>
+          <span class="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-base-300 bg-base-200/60 text-base-content/75">
+            <ChevronRight class="group-open:hidden" size={16} />
+            <ChevronDown class="hidden group-open:block" size={16} />
+          </span>
+        </div>
       </summary>
       <div class="mt-4 border-t border-base-300 pt-4">
         <Markdown source={props.source} />
@@ -1430,12 +1469,12 @@ function UnitTreeNode(props: {
           <div class="mt-1.5 text-xs text-base-content/90">{plainText(props.unit.description) || 'No description yet.'}</div>
         </div>
         <div class="flex gap-2">
-          <button class="btn btn-outline btn-xs" onClick={() => props.onEdit(props.unit)}>
-            Edit
+          <button class="btn btn-outline btn-xs" onClick={() => props.onEdit(props.unit)} title="Edit unit" aria-label="Edit unit">
+            <Pencil size={14} />
           </button>
           {nextChildType[props.unit.type] && (
-            <button class="btn btn-primary btn-xs" onClick={() => props.onCreateChild(props.unit)}>
-              Add child
+            <button class="btn btn-primary btn-xs" onClick={() => props.onCreateChild(props.unit)} title="Add child" aria-label="Add child">
+              <Plus size={14} />
             </button>
           )}
         </div>

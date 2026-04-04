@@ -11,6 +11,7 @@
   "dependencies": {
     "blueimp-md5": "^2.19.0",
     "dompurify": "^3.3.3",
+    "lucide-preact": "^1.7.0",
     "marked": "^17.0.5",
     "pocketbase": "^0.26.8",
     "preact": "^10.29.0"
