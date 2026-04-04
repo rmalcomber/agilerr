@@ -127,6 +127,7 @@ type UnitDraft = {
 type AppRoute =
   | { kind: 'root' }
   | { kind: 'api' }
+  | { kind: 'mcp' }
   | {
       kind: 'project'
       projectId: string
@@ -674,6 +675,7 @@ export default function App() {
 
   const activePage = route.kind === 'project' ? route.view : null
   const apiPageActive = route.kind === 'api' || activePage === 'api'
+  const mcpPageActive = route.kind === 'mcp'
   const projectRouteInvalid = route.kind === 'project' && route.view === 'kanban' && routeContext?.invalid
 
   return (
@@ -810,18 +812,22 @@ export default function App() {
                 </li>
               )}
             </ul>
-            {selectedProjectId && (
-              <div class={`mt-3 border-t border-base-300/70 pt-3 ${sidebarCollapsed ? 'w-full' : ''}`}>
-                <ul class={`menu rounded-box bg-base-100/75 p-2 ${sidebarCollapsed ? 'items-center' : ''}`}>
-                  <li>
-                    <button class={`${apiPageActive ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(apiPath())} title="API" aria-label="API">
-                      <SquarePen size={16} />
-                      {!sidebarCollapsed && <span>API</span>}
-                    </button>
-                  </li>
-                </ul>
-              </div>
-            )}
+            <div class={`mt-3 border-t border-base-300/70 pt-3 ${sidebarCollapsed ? 'w-full' : ''}`}>
+              <ul class={`menu rounded-box bg-base-100/75 p-2 ${sidebarCollapsed ? 'items-center' : ''}`}>
+                <li>
+                  <button class={`${apiPageActive ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(apiPath())} title="API" aria-label="API">
+                    <SquarePen size={16} />
+                    {!sidebarCollapsed && <span>API</span>}
+                  </button>
+                </li>
+                <li>
+                  <button class={`${mcpPageActive ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(mcpPath())} title="MCP" aria-label="MCP">
+                    <LayoutGrid size={16} />
+                    {!sidebarCollapsed && <span>MCP</span>}
+                  </button>
+                </li>
+              </ul>
+            </div>
           </nav>
 
           <div class={`mt-auto rounded-xl border border-base-300 bg-base-100 p-3 ${sidebarCollapsed ? 'w-full max-w-[56px]' : ''}`}>
@@ -871,6 +877,10 @@ export default function App() {
                 </>
               )}
             </>
+          )}
+
+          {route.kind === 'mcp' && (
+            <MCPDocsPage />
           )}
 
           {route.kind === 'project' && !tree && <div class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-6 shadow-panel">Loading project…</div>}
@@ -2551,6 +2561,99 @@ function ApiEndpointCard(props: {
   )
 }
 
+function MCPDocsPage() {
+  const commandSnippet = `./backend/agilerr mcp`
+  const claudeDesktopSnippet = `{
+  "mcpServers": {
+    "agilerr": {
+      "command": "/absolute/path/to/agilerr",
+      "args": ["mcp"],
+      "env": {
+        "PB_DATA_DIR": "/absolute/path/to/pb_data",
+        "ADMIN_EMAIL": "admin@agilerr.local",
+        "ADMIN_PASSWORD": "change-me-now"
+      }
+    }
+  }
+}`
+  const toolsSnippet = `list_projects
+list_project_items
+add_item`
+
+  return (
+    <section class="space-y-5">
+      <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">MCP</p>
+        <h1 class="mt-2 text-2xl font-black">Model Context Protocol server</h1>
+        <p class="mt-2 max-w-3xl text-sm text-base-content/85">Agilerr includes a stdio MCP server mode so agents can discover projects and add backlog items directly. Run the same binary with the `mcp` argument.</p>
+      </section>
+
+      <section class="grid gap-5 xl:grid-cols-[1fr,0.95fr]">
+        <div class="space-y-5">
+          <DocCard title="Launch command" body="Start the MCP server over stdio. Agents should use this as the command target, not the HTTP server mode.">
+            <CopyableCodeBlock code={commandSnippet} />
+          </DocCard>
+
+          <DocCard title="Available tools" body="The first pass exposes enough tools for agents to inspect projects and create work items.">
+            <CopyableCodeBlock code={toolsSnippet} />
+          </DocCard>
+        </div>
+
+        <div class="space-y-5">
+          <DocCard title="Client config" body="Example Claude Desktop-style MCP server config. Adjust the binary path and PocketBase data directory for your machine.">
+            <CopyableCodeBlock code={claudeDesktopSnippet} />
+          </DocCard>
+        </div>
+      </section>
+
+      <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+        <h2 class="text-lg font-bold">Notes</h2>
+        <div class="mt-4 space-y-3 text-sm text-base-content/82">
+          <p>The MCP mode reads the same environment variables as the main binary, especially `PB_DATA_DIR`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD`.</p>
+          <p>Use `list_projects` first to discover a project id. Use `list_project_items` to inspect parent item ids before creating child items. Then call `add_item` with `projectId`, `type`, `title`, and any optional fields like `parentId`, `status`, `tags`, `assigneeId`, or bug `priority`.</p>
+          <p>The server speaks MCP over stdio and is intended for agent clients that support the standard initialize, tools/list, and tools/call flow.</p>
+        </div>
+      </section>
+    </section>
+  )
+}
+
+function DocCard(props: { title: string; body: string; children: ComponentChildren }) {
+  return (
+    <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+      <h2 class="text-lg font-bold">{props.title}</h2>
+      <p class="mt-2 text-sm text-base-content/82">{props.body}</p>
+      <div class="mt-4">{props.children}</div>
+    </section>
+  )
+}
+
+function CopyableCodeBlock(props: { code: string }) {
+  const [copied, setCopied] = useState(false)
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(props.code)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1600)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  return (
+    <div class="rounded-xl border border-base-300 bg-base-200/50 p-3">
+      <div class="mb-3 flex justify-end">
+        <button class="btn btn-outline btn-xs gap-2" onClick={() => void handleCopy()}>
+          <Copy size={14} />
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <pre class="overflow-auto rounded-xl bg-neutral p-4 text-xs text-neutral-content"><code>{props.code}</code></pre>
+    </div>
+  )
+}
+
 function statusBorderStyle(project: Project, status: UnitStatus) {
   return {
     borderRightColor: project.statusColors[status],
@@ -2597,6 +2700,7 @@ function parseRoute(pathname: string): AppRoute {
 
   if (!segments.length) return { kind: 'root' }
   if (segments[0] === 'api' && segments.length === 1) return { kind: 'api' }
+  if (segments[0] === 'mcp' && segments.length === 1) return { kind: 'mcp' }
   if (segments[0] !== 'projects' || !segments[1]) return { kind: 'root' }
 
   const projectId = segments[1]
@@ -2678,6 +2782,10 @@ function projectBacklogPath(projectId: string) {
 
 function apiPath() {
   return '/api'
+}
+
+function mcpPath() {
+  return '/mcp'
 }
 
 function projectBugsPath(projectId: string) {

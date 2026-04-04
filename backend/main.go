@@ -39,6 +39,13 @@ func main() {
 		log.Fatal(err)
 	}
 
+	if len(os.Args) > 1 && strings.TrimSpace(os.Args[1]) == "mcp" {
+		if err := service.RunMCPServer(); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		service.RegisterRoutes(e)
 		service.RegisterFrontendRoutes(e)
