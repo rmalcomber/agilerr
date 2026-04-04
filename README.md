@@ -19,7 +19,7 @@ Agilerr is a lean Agile Scrum board built as:
 ## Local Development
 
 1. Copy `.env.example` to `.env` and set `ADMIN_PASSWORD`.
-2. Optional: set `AGILERR_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`.
+2. Optional: set `HTTP_ADDR`, `AGILERR_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`.
 3. Run the backend:
 
 ```bash
@@ -36,7 +36,7 @@ npm run dev
 ```
 
 - Frontend: `http://localhost:5173`
-- Backend and PocketBase APIs: `http://localhost:8090`
+- Backend and PocketBase APIs: use `HTTP_ADDR` if set. If unset, Agilerr generates a random local port and prints it on startup.
 
 In dev mode the frontend is not embedded. Vite runs separately and proxies API calls to the backend.
 
@@ -78,6 +78,10 @@ docker compose up --build
 - `HTTP_ADDR`
 - `PB_DATA_DIR`
 - `ALLOWED_ORIGINS`
+
+If `HTTP_ADDR` is unset, Agilerr generates a random high local port.
+
+If `AGILERR_API_KEY` is unset, Agilerr generates a random API key for that process and prints it on startup.
 
 ## API Surface
 

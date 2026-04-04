@@ -46,6 +46,12 @@ func main() {
 	})
 
 	log.Printf("Agilerr backend listening on %s", cfg.HTTPAddr)
+	if cfg.GeneratedHTTPAddr {
+		log.Printf("HTTP_ADDR was not set. Generated local default: %s", cfg.HTTPAddr)
+	}
+	if cfg.GeneratedAPIKey {
+		log.Printf("AGILERR_API_KEY was not set. Generated API key for this run: %s", cfg.APIKey)
+	}
 	if err := apis.Serve(app, apis.ServeConfig{
 		HttpAddr:        cfg.HTTPAddr,
 		ShowStartBanner: false,
