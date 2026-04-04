@@ -1444,6 +1444,8 @@ function ProjectSettingsPage(props: {
   onChange: (draft: typeof emptyProjectDraft) => void
   onSave: (event: Event) => void
 }) {
+  const [tab, setTab] = useState<'general' | 'items' | 'statuses'>('general')
+
   return (
     <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
       <div class="mb-5">
@@ -1453,65 +1455,116 @@ function ProjectSettingsPage(props: {
       </div>
 
       <form class="space-y-5" onSubmit={props.onSave}>
-        <div class="grid gap-5 lg:grid-cols-[1fr,0.95fr]">
-          <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
-            <h3 class="text-lg font-bold">Project</h3>
-            <Field label="Name">
-              <input class="input input-bordered w-full" required value={props.draft.name} onInput={(e) => props.onChange({ ...props.draft, name: (e.currentTarget as HTMLInputElement).value })} />
-            </Field>
-            <Field label="Description">
-              <textarea class="textarea textarea-bordered min-h-36 w-full" value={props.draft.description} onInput={(e) => props.onChange({ ...props.draft, description: (e.currentTarget as HTMLTextAreaElement).value })} />
-            </Field>
-            <Field label="Project color">
-              <ColorPicker value={props.draft.color} onChange={(color) => props.onChange({ ...props.draft, color })} />
-            </Field>
-            <TagEditor tags={props.draft.tags} suggestions={props.suggestions} onChange={(tags) => props.onChange({ ...props.draft, tags })} />
-          </section>
+        <div class="grid gap-5 xl:grid-cols-[240px,1fr]">
+          <aside class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
+            <div class="rounded-xl border border-base-300 bg-base-200/40 p-2">
+              <div class="flex flex-col gap-2">
+                <button class={`btn btn-sm justify-start ${tab === 'general' ? 'btn-primary' : 'btn-ghost border border-base-300'}`} type="button" onClick={() => setTab('general')}>
+                General
+                </button>
+                <button class={`btn btn-sm justify-start ${tab === 'items' ? 'btn-primary' : 'btn-ghost border border-base-300'}`} type="button" onClick={() => setTab('items')}>
+                Item colors
+                </button>
+                <button class={`btn btn-sm justify-start ${tab === 'statuses' ? 'btn-primary' : 'btn-ghost border border-base-300'}`} type="button" onClick={() => setTab('statuses')}>
+                Status colors
+                </button>
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-base-300 bg-base-200/40 p-4">
+              <div class="text-xs font-semibold uppercase tracking-[0.2em] text-base-content/70">Current project</div>
+              <div class="mt-3 flex items-center gap-3">
+                <span class="h-4 w-4 rounded-full" style={{ backgroundColor: props.draft.color }} />
+                <div class="min-w-0">
+                  <div class="truncate font-semibold">{props.draft.name || 'Untitled project'}</div>
+                  <div class="text-xs text-base-content/75">{props.draft.tags.length} tags configured</div>
+                </div>
+              </div>
+            </div>
+          </aside>
 
           <div class="space-y-5">
-            <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
-              <h3 class="text-lg font-bold">Item colors</h3>
-              {(['epic', 'feature', 'story', 'task', 'bug'] as UnitType[]).map((type) => (
-                <Field label={typeLabels[type]} key={type}>
-                  <ColorPicker
-                    value={props.draft.unitColors[type]}
-                    onChange={(color) =>
-                      props.onChange({
-                        ...props.draft,
-                        unitColors: {
-                          ...props.draft.unitColors,
-                          [type]: color,
-                        },
-                      })
-                    }
-                  />
+            {tab === 'general' && (
+              <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
+                <div>
+                  <h3 class="text-lg font-bold">General</h3>
+                  <p class="mt-1 text-sm text-base-content/80">Edit the core project information and tagging defaults.</p>
+                </div>
+                <Field label="Name">
+                  <input class="input input-bordered w-full" required value={props.draft.name} onInput={(e) => props.onChange({ ...props.draft, name: (e.currentTarget as HTMLInputElement).value })} />
                 </Field>
-              ))}
-            </section>
+                <Field label="Description">
+                  <textarea class="textarea textarea-bordered min-h-36 w-full" value={props.draft.description} onInput={(e) => props.onChange({ ...props.draft, description: (e.currentTarget as HTMLTextAreaElement).value })} />
+                </Field>
+                <Field label="Project color">
+                  <ColorPicker value={props.draft.color} onChange={(color) => props.onChange({ ...props.draft, color })} />
+                </Field>
+                <TagEditor tags={props.draft.tags} suggestions={props.suggestions} onChange={(tags) => props.onChange({ ...props.draft, tags })} />
+              </section>
+            )}
 
-            <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
-              <h3 class="text-lg font-bold">Status colors</h3>
-              {statuses.map((status) => (
-                <Field label={status.label} key={status.key}>
-                  <ColorPicker
-                    value={props.draft.statusColors[status.key]}
-                    onChange={(color) =>
-                      props.onChange({
-                        ...props.draft,
-                        statusColors: {
-                          ...props.draft.statusColors,
-                          [status.key]: color,
-                        },
-                      })
-                    }
-                  />
-                </Field>
-              ))}
-            </section>
+            {tab === 'items' && (
+              <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
+                <div>
+                  <h3 class="text-lg font-bold">Item colors</h3>
+                  <p class="mt-1 text-sm text-base-content/80">Choose the default color used for each backlog item type.</p>
+                </div>
+                <div class="grid gap-4 lg:grid-cols-2">
+                  {(['epic', 'feature', 'story', 'task', 'bug'] as UnitType[]).map((type) => (
+                    <div class="rounded-xl border border-base-300 bg-base-100 p-3" key={type}>
+                      <Field label={typeLabels[type]}>
+                        <ColorPicker
+                          value={props.draft.unitColors[type]}
+                          onChange={(color) =>
+                            props.onChange({
+                              ...props.draft,
+                              unitColors: {
+                                ...props.draft.unitColors,
+                                [type]: color,
+                              },
+                            })
+                          }
+                        />
+                      </Field>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {tab === 'statuses' && (
+              <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
+                <div>
+                  <h3 class="text-lg font-bold">Status colors</h3>
+                  <p class="mt-1 text-sm text-base-content/80">Define the lane colors that appear on item borders and status summaries.</p>
+                </div>
+                <div class="grid gap-4 lg:grid-cols-2">
+                  {statuses.map((status) => (
+                    <div class="rounded-xl border border-base-300 bg-base-100 p-3" key={status.key}>
+                      <Field label={status.label}>
+                        <ColorPicker
+                          value={props.draft.statusColors[status.key]}
+                          onChange={(color) =>
+                            props.onChange({
+                              ...props.draft,
+                              statusColors: {
+                                ...props.draft.statusColors,
+                                [status.key]: color,
+                              },
+                            })
+                          }
+                        />
+                      </Field>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
           </div>
         </div>
 
-        <div class="flex justify-end">
+        <div class="flex justify-between gap-3 border-t border-base-300/70 pt-4">
+          <div class="text-sm text-base-content/75">Changes apply to the current project immediately after save.</div>
           <button class="btn btn-primary" type="submit">
             <SquarePen size={16} />
             Save project settings
