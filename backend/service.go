@@ -240,8 +240,12 @@ func (s *AgilerrService) handleUnitCreate(e *core.RequestEvent) error {
 	req.ProjectID = projectID
 	req.Tags = normalizeTags(req.Tags)
 	req.Status = firstNonEmpty(strings.TrimSpace(req.Status), "todo")
+	req.Priority = strings.ToLower(strings.TrimSpace(req.Priority))
 	req.Title = strings.TrimSpace(req.Title)
 	req.Description = strings.TrimSpace(req.Description)
+	if strings.EqualFold(req.Type, "bug") && req.Status == "todo" {
+		req.Status = "triage"
+	}
 
 	projectRecord, err := findProject(s.app, projectID)
 	if err != nil {
@@ -269,6 +273,7 @@ func (s *AgilerrService) handleUnitCreate(e *core.RequestEvent) error {
 	record.Set("parent", strings.TrimSpace(req.ParentID))
 	record.Set("type", strings.ToLower(req.Type))
 	record.Set("status", strings.ToLower(req.Status))
+	record.Set("priority", req.Priority)
 	record.Set("title", req.Title)
 	record.Set("description", req.Description)
 	record.Set("color", projectColorForType(projectRecord, req.Type))
@@ -299,6 +304,7 @@ func (s *AgilerrService) handleUnitUpdate(e *core.RequestEvent) error {
 	req.ParentID = strings.TrimSpace(req.ParentID)
 	req.Type = firstNonEmpty(strings.TrimSpace(req.Type), unitRecord.GetString("type"))
 	req.Status = firstNonEmpty(strings.TrimSpace(req.Status), unitRecord.GetString("status"))
+	req.Priority = firstNonEmpty(strings.TrimSpace(req.Priority), unitRecord.GetString("priority"))
 	req.Title = firstNonEmpty(strings.TrimSpace(req.Title), unitRecord.GetString("title"))
 	req.Description = strings.TrimSpace(req.Description)
 	req.Tags = normalizeTags(req.Tags)
@@ -326,6 +332,7 @@ func (s *AgilerrService) handleUnitUpdate(e *core.RequestEvent) error {
 	unitRecord.Set("parent", req.ParentID)
 	unitRecord.Set("type", req.Type)
 	unitRecord.Set("status", req.Status)
+	unitRecord.Set("priority", req.Priority)
 	unitRecord.Set("title", req.Title)
 	unitRecord.Set("description", req.Description)
 	unitRecord.Set("color", projectColorForType(projectRecord, req.Type))
@@ -352,6 +359,13 @@ func (s *AgilerrService) handleUnitMove(e *core.RequestEvent) error {
 	req.Status = strings.ToLower(strings.TrimSpace(req.Status))
 	if !contains(unitStatuses, req.Status) {
 		return badRequest(e, "invalid status", nil)
+	}
+	if unitRecord.GetString("type") == "bug" {
+		if !contains(unitStatuses, req.Status) {
+			return badRequest(e, "invalid bug status", nil)
+		}
+	} else if req.Status == "triage" {
+		return badRequest(e, "triage status is only valid for bugs", nil)
 	}
 
 	unitRecord.Set("status", req.Status)

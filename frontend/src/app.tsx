@@ -7,7 +7,9 @@ import {
   ChevronRight,
   ChevronsUpDown,
   FolderKanban,
+  Bug,
   LayoutGrid,
+  List,
   LogOut,
   Pencil,
   Plus,
@@ -28,6 +30,7 @@ import type {
   ProjectTree,
   Suggestions,
   Unit,
+  BugPriority,
   UnitColors,
   UnitStatus,
   UnitType,
@@ -35,10 +38,20 @@ import type {
 } from './types'
 
 const statuses: Array<{ key: UnitStatus; label: string }> = [
+  { key: 'triage', label: 'Triage' },
   { key: 'todo', label: 'Todo' },
   { key: 'in_progress', label: 'In Progress' },
   { key: 'review', label: 'Review' },
   { key: 'done', label: 'Done' },
+]
+
+const standardStatuses = statuses.filter((status) => status.key !== 'triage')
+const bugStatuses = statuses
+const bugPriorities: Array<{ key: BugPriority; label: string }> = [
+  { key: 'critical', label: 'Critical' },
+  { key: 'high', label: 'High' },
+  { key: 'medium', label: 'Medium' },
+  { key: 'low', label: 'Low' },
 ]
 
 const typeLabels: Record<UnitType, string> = {
@@ -46,6 +59,7 @@ const typeLabels: Record<UnitType, string> = {
   feature: 'Feature',
   story: 'User Story',
   task: 'Task',
+  bug: 'Bug',
 }
 
 const pluralSegments: Record<UnitType, string> = {
@@ -53,6 +67,7 @@ const pluralSegments: Record<UnitType, string> = {
   feature: 'features',
   story: 'stories',
   task: 'tasks',
+  bug: 'bugs',
 }
 
 const nextChildType: Record<UnitType, UnitType | null> = {
@@ -60,6 +75,7 @@ const nextChildType: Record<UnitType, UnitType | null> = {
   feature: 'story',
   story: 'task',
   task: null,
+  bug: null,
 }
 
 const presetColors = ['#c2410c', '#2563eb', '#0f766e', '#7c3aed', '#e11d48']
@@ -69,6 +85,7 @@ const defaultUnitColors: UnitColors = {
   feature: presetColors[1],
   story: presetColors[2],
   task: presetColors[3],
+  bug: '#dc2626',
 }
 
 type UnitDraft = {
@@ -77,6 +94,7 @@ type UnitDraft = {
   parentId?: string
   type: UnitType
   status: UnitStatus
+  priority?: BugPriority
   title: string
   description: string
   tags: string[]
@@ -123,6 +141,7 @@ export default function App() {
   const [projectEditor, setProjectEditor] = useState(emptyProjectDraft)
   const [unitEditor, setUnitEditor] = useState<UnitDraft | null>(null)
   const [detailUnitId, setDetailUnitId] = useState<string | null>(null)
+  const [bugsView, setBugsView] = useState<'list' | 'kanban'>('kanban')
   const [commentBody, setCommentBody] = useState('')
   const [commentMentions, setCommentMentions] = useState<Mention[]>([])
   const [suggestions, setSuggestions] = useState<Suggestions>({ units: [], users: [], tags: [] })
@@ -157,6 +176,8 @@ export default function App() {
   const selectedProject = tree?.project.id === selectedProjectId ? tree.project : projects.find((project) => project.id === selectedProjectId) || null
   const unitById = useMemo<Record<string, Unit>>(() => Object.fromEntries(units.map((unit) => [unit.id, unit])), [units])
   const userById = useMemo<Record<string, User>>(() => Object.fromEntries(users.map((user) => [user.id, user])), [users])
+  const standardUnits = useMemo(() => units.filter((unit) => unit.type !== 'bug'), [units])
+  const bugUnits = useMemo(() => units.filter((unit) => unit.type === 'bug'), [units])
   const commentsByUnit = useMemo(() => {
     const map = new Map<string, Comment[]>()
     for (const comment of comments) {
@@ -168,7 +189,7 @@ export default function App() {
   }, [comments])
   const treeByParent = useMemo(() => {
     const map = new Map<string, Unit[]>()
-    for (const unit of units) {
+    for (const unit of standardUnits) {
       const key = unit.parentId || 'root'
       const bucket = map.get(key) || []
       bucket.push(unit)
@@ -178,7 +199,7 @@ export default function App() {
       bucket.sort((a, b) => a.position - b.position || a.title.localeCompare(b.title))
     }
     return map
-  }, [units])
+  }, [standardUnits])
   const routeContext = useMemo<RouteContext | null>(() => {
     if (route.kind !== 'project') return null
     return resolveRouteContext(route, unitById)
@@ -344,7 +365,7 @@ export default function App() {
       setDetailUnitId(null)
       setUnitEditor(null)
       if (unit) {
-        const fallback = unit.parentId ? buildUnitPath(unit.projectId, unitById, unit.parentId) : projectKanbanPath(unit.projectId)
+        const fallback = unit.type === 'bug' ? projectBugsPath(unit.projectId) : unit.parentId ? buildUnitPath(unit.projectId, unitById, unit.parentId) : projectKanbanPath(unit.projectId)
         navigate(fallback, true)
       }
       if (selectedProjectId) await loadProject(selectedProjectId)
@@ -382,6 +403,18 @@ export default function App() {
     })
   }
 
+  function openNewBug(projectId: string) {
+    setUnitEditor({
+      projectId,
+      type: 'bug',
+      status: 'triage',
+      priority: 'medium',
+      title: '',
+      description: '',
+      tags: [],
+    })
+  }
+
   function openEditUnit(unit: Unit) {
     setUnitEditor({
       id: unit.id,
@@ -389,6 +422,7 @@ export default function App() {
       parentId: unit.parentId,
       type: unit.type,
       status: unit.status,
+      priority: unit.priority,
       title: unit.title,
       description: unit.description,
       tags: [...unit.tags],
@@ -566,6 +600,12 @@ export default function App() {
                 </button>
               </li>
               <li>
+                <button class={activePage === 'bugs' ? 'active' : ''} disabled={!selectedProjectId} onClick={() => selectedProjectId && navigate(projectBugsPath(selectedProjectId))}>
+                  <Bug size={16} />
+                  Bugs
+                </button>
+              </li>
+              <li>
                 <button class={activePage === 'settings' ? 'active' : ''} disabled={!selectedProjectId} onClick={() => selectedProjectId && navigate(projectSettingsPath(selectedProjectId))}>
                   <Settings2 size={16} />
                   Settings
@@ -606,11 +646,11 @@ export default function App() {
             <>
               {route.view === 'backlog' && (
                 <>
-                  <ProjectHero project={tree.project} tags={tree.tags} onEdit={() => navigate(projectSettingsPath(tree.project.id))} onAddEpic={() => openNewUnit(tree.project.id)} />
+                  <ProjectHero project={tree.project} tags={tree.tags} onEdit={() => navigate(projectSettingsPath(tree.project.id))} onAddPrimary={() => openNewUnit(tree.project.id)} addLabel="Add epic" addTitle="Add epic" />
                   <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-4 shadow-panel">
                     <div class="mb-4 flex items-center justify-between">
                       <h2 class="text-lg font-bold">Backlog</h2>
-                      <span class="text-xs text-base-content/75">{units.length} items</span>
+                      <span class="text-xs text-base-content/75">{standardUnits.length} items</span>
                     </div>
                     <div class="space-y-3">
                       {(treeByParent.get('root') || []).map((unit) => (
@@ -625,7 +665,7 @@ export default function App() {
                           onCreateChild={(target) => openNewUnit(tree.project.id, target)}
                         />
                       ))}
-                      {!units.length && <div class="rounded-xl border border-dashed border-base-300 p-3 text-xs text-base-content/80">No items yet. Start with an Epic.</div>}
+                      {!standardUnits.length && <div class="rounded-xl border border-dashed border-base-300 p-3 text-xs text-base-content/80">No items yet. Start with an Epic.</div>}
                     </div>
                   </section>
                 </>
@@ -633,9 +673,24 @@ export default function App() {
 
               {route.view === 'api' && (
                 <>
-                  <ProjectHero project={tree.project} tags={tree.tags} onEdit={() => navigate(projectSettingsPath(tree.project.id))} onAddEpic={() => openNewUnit(tree.project.id)} />
+                  <ProjectHero project={tree.project} tags={tree.tags} onEdit={() => navigate(projectSettingsPath(tree.project.id))} onAddPrimary={() => openNewUnit(tree.project.id)} addLabel="Add epic" addTitle="Add epic" />
                   <ApiDocsPage projectId={tree.project.id} />
                 </>
+              )}
+
+              {route.view === 'bugs' && (
+                <BugsPage
+                  project={tree.project}
+                  bugs={bugUnits}
+                  commentsByUnit={commentsByUnit}
+                  bugsView={bugsView}
+                  onChangeView={setBugsView}
+                  onEditProject={() => navigate(projectSettingsPath(tree.project.id))}
+                  onAddBug={() => openNewBug(tree.project.id)}
+                  onOpenDetails={openUnitDetails}
+                  onEditBug={openEditUnit}
+                  onMoveBug={(unitId, status) => void moveUnit(unitId, status)}
+                />
               )}
 
               {route.view === 'settings' && (
@@ -727,9 +782,18 @@ export default function App() {
                     class="select select-bordered w-full"
                     value={unitEditor.type}
                     disabled={Boolean(unitEditor.parentId)}
-                    onChange={(e) => setUnitEditor({ ...unitEditor, type: (e.currentTarget as HTMLSelectElement).value as UnitType })}
+                    onChange={(e) => {
+                      const nextType = (e.currentTarget as HTMLSelectElement).value as UnitType
+                      setUnitEditor({
+                        ...unitEditor,
+                        type: nextType,
+                        parentId: nextType === 'bug' ? undefined : unitEditor.parentId,
+                        status: nextType === 'bug' ? 'triage' : unitEditor.status === 'triage' ? 'todo' : unitEditor.status,
+                        priority: nextType === 'bug' ? unitEditor.priority || 'medium' : undefined,
+                      })
+                    }}
                   >
-                    {(['epic', 'feature', 'story', 'task'] as UnitType[]).map((type) => (
+                    {(['epic', 'feature', 'story', 'task', 'bug'] as UnitType[]).map((type) => (
                       <option value={type}>{typeLabels[type]}</option>
                     ))}
                   </select>
@@ -750,23 +814,33 @@ export default function App() {
                 <h3 class="text-lg font-bold">Optional</h3>
                 <Field label="Status">
                   <select class="select select-bordered w-full" value={unitEditor.status} onChange={(e) => setUnitEditor({ ...unitEditor, status: (e.currentTarget as HTMLSelectElement).value as UnitStatus })}>
-                    {statuses.map((status) => (
+                    {(unitEditor.type === 'bug' ? bugStatuses : standardStatuses).map((status) => (
                       <option value={status.key}>{status.label}</option>
                     ))}
                   </select>
                 </Field>
-                <Field label="Parent">
-                  <select class="select select-bordered w-full" value={unitEditor.parentId || ''} onChange={(e) => setUnitEditor({ ...unitEditor, parentId: (e.currentTarget as HTMLSelectElement).value || undefined })}>
-                    <option value="">No parent</option>
-                    {units
-                      .filter((unit) => unit.id !== unitEditor.id)
-                      .map((unit) => (
-                        <option value={unit.id}>
-                          {typeLabels[unit.type]}: {unit.title}
-                        </option>
+                {unitEditor.type === 'bug' ? (
+                  <Field label="Priority">
+                    <select class="select select-bordered w-full" value={unitEditor.priority || 'medium'} onChange={(e) => setUnitEditor({ ...unitEditor, priority: (e.currentTarget as HTMLSelectElement).value as BugPriority })}>
+                      {bugPriorities.map((priority) => (
+                        <option value={priority.key}>{priority.label}</option>
                       ))}
-                  </select>
-                </Field>
+                    </select>
+                  </Field>
+                ) : (
+                  <Field label="Parent">
+                    <select class="select select-bordered w-full" value={unitEditor.parentId || ''} onChange={(e) => setUnitEditor({ ...unitEditor, parentId: (e.currentTarget as HTMLSelectElement).value || undefined })}>
+                      <option value="">No parent</option>
+                      {standardUnits
+                        .filter((unit) => unit.id !== unitEditor.id)
+                        .map((unit) => (
+                          <option value={unit.id}>
+                            {typeLabels[unit.type]}: {unit.title}
+                          </option>
+                        ))}
+                    </select>
+                  </Field>
+                )}
                 <TagEditor tags={unitEditor.tags} suggestions={tree?.tags || []} onChange={(tags) => setUnitEditor({ ...unitEditor, tags })} />
               </section>
             </div>
@@ -856,7 +930,7 @@ function ProjectDirectory(props: { projects: Project[]; onCreate: () => void; on
   )
 }
 
-function ProjectHero(props: { project: Project; tags: string[]; onEdit: () => void; onAddEpic: () => void }) {
+function ProjectHero(props: { project: Project; tags: string[]; onEdit: () => void; onAddPrimary: () => void; addLabel: string; addTitle: string }) {
   return (
     <header class="mb-5 rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
       <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -877,9 +951,9 @@ function ProjectHero(props: { project: Project; tags: string[]; onEdit: () => vo
             <Pencil size={16} />
             <span class="sr-only">Edit project</span>
           </button>
-          <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={props.onAddEpic} title="Add epic" aria-label="Add epic">
+          <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={props.onAddPrimary} title={props.addTitle} aria-label={props.addTitle}>
             <Plus size={16} />
-            <span class="sr-only">Add epic</span>
+            <span class="sr-only">{props.addLabel}</span>
           </button>
         </div>
       </div>
@@ -919,7 +993,7 @@ function ProjectSettingsPage(props: {
 
           <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
             <h3 class="text-lg font-bold">Item colors</h3>
-            {(['epic', 'feature', 'story', 'task'] as UnitType[]).map((type) => (
+            {(['epic', 'feature', 'story', 'task', 'bug'] as UnitType[]).map((type) => (
               <Field label={typeLabels[type]} key={type}>
                 <ColorPicker
                   value={props.draft.unitColors[type]}
@@ -946,6 +1020,97 @@ function ProjectSettingsPage(props: {
         </div>
       </form>
     </section>
+  )
+}
+
+function BugsPage(props: {
+  project: Project
+  bugs: Unit[]
+  commentsByUnit: Map<string, Comment[]>
+  bugsView: 'list' | 'kanban'
+  onChangeView: (view: 'list' | 'kanban') => void
+  onEditProject: () => void
+  onAddBug: () => void
+  onOpenDetails: (unit: Unit) => void
+  onEditBug: (unit: Unit) => void
+  onMoveBug: (unitId: string, status: UnitStatus) => void
+}) {
+  return (
+    <section class="space-y-5">
+      <ProjectHero project={props.project} tags={props.project.tags} onEdit={props.onEditProject} onAddPrimary={props.onAddBug} addLabel="Add bug" addTitle="Add bug" />
+      <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-4 shadow-panel">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-lg font-bold">Bugs</h2>
+            <p class="mt-1 text-xs text-base-content/80">Project-wide bugs stay separate from the epic-feature-story-task flow.</p>
+          </div>
+          <div class="join">
+            <button class={`btn btn-sm join-item ${props.bugsView === 'list' ? 'btn-primary' : 'btn-outline'}`} onClick={() => props.onChangeView('list')}>
+              <List size={16} />
+              List
+            </button>
+            <button class={`btn btn-sm join-item ${props.bugsView === 'kanban' ? 'btn-primary' : 'btn-outline'}`} onClick={() => props.onChangeView('kanban')}>
+              <FolderKanban size={16} />
+              Board
+            </button>
+          </div>
+        </div>
+
+        {props.bugsView === 'list' ? (
+          <BugList bugs={props.bugs} commentsByUnit={props.commentsByUnit} onOpenDetails={props.onOpenDetails} onEditBug={props.onEditBug} />
+        ) : (
+          <KanbanBoard
+            title="Bug Board"
+            subtitle="New bugs start in triage before they move into planned work."
+            units={props.bugs}
+            onMoveUnit={props.onMoveBug}
+            onOpenRoute={props.onOpenDetails}
+            onOpenDetails={props.onOpenDetails}
+            statusOptions={bugStatuses}
+          />
+        )}
+      </section>
+    </section>
+  )
+}
+
+function BugList(props: {
+  bugs: Unit[]
+  commentsByUnit: Map<string, Comment[]>
+  onOpenDetails: (unit: Unit) => void
+  onEditBug: (unit: Unit) => void
+}) {
+  const sorted = [...props.bugs].sort((a, b) => bugPriorityRank(a.priority) - bugPriorityRank(b.priority) || a.position - b.position)
+  return (
+    <div class="space-y-3">
+      {sorted.map((bug) => (
+        <article class="rounded-xl border border-base-300 bg-base-100 p-3">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="badge badge-error">Bug</span>
+                <PriorityBadge priority={bug.priority} />
+                <span class="badge badge-outline border-base-content/40 text-base-content">{statusLabel(bug.status)}</span>
+              </div>
+              <button class="mt-2 block text-left text-base font-semibold hover:text-primary" onClick={() => props.onOpenDetails(bug)}>
+                {bug.title}
+              </button>
+              <div class="mt-1.5 text-xs text-base-content/90">{plainText(bug.description) || 'No description yet.'}</div>
+            </div>
+            <button class="btn btn-outline btn-xs" onClick={() => props.onEditBug(bug)} title="Edit bug" aria-label="Edit bug">
+              <Pencil size={14} />
+            </button>
+          </div>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <span class="badge badge-outline border-base-content/40 text-base-content">{props.commentsByUnit.get(bug.id)?.length || 0} comments</span>
+            {bug.tags.map((tag) => (
+              <span class="badge">{tag}</span>
+            ))}
+          </div>
+        </article>
+      ))}
+      {!sorted.length && <div class="rounded-xl border border-dashed border-base-300 p-4 text-sm text-base-content/80">No bugs yet.</div>}
+    </div>
   )
 }
 
@@ -1022,7 +1187,7 @@ function KanbanRoutePage(props: {
           </section>
         </>
       ) : (
-        <ProjectHero project={props.project} tags={props.allTags} onEdit={props.onEditProject} onAddEpic={props.onAddEpic} />
+        <ProjectHero project={props.project} tags={props.allTags} onEdit={props.onEditProject} onAddPrimary={props.onAddEpic} addLabel="Add epic" addTitle="Add epic" />
       )}
 
       {!taskUnit && (
@@ -1033,6 +1198,7 @@ function KanbanRoutePage(props: {
           onMoveUnit={props.onMoveUnit}
           onOpenRoute={props.onOpenRoute}
           onOpenDetails={props.onOpenDetails}
+          statusOptions={standardStatuses}
         />
       )}
 
@@ -1060,6 +1226,7 @@ function KanbanBoard(props: {
   onMoveUnit: (unitId: string, status: UnitStatus) => void
   onOpenRoute: (unit: Unit) => void
   onOpenDetails: (unit: Unit) => void
+  statusOptions: Array<{ key: UnitStatus; label: string }>
 }) {
   return (
     <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-4 shadow-panel">
@@ -1071,7 +1238,7 @@ function KanbanBoard(props: {
         <span class="text-xs text-base-content/75">Drag cards between lanes</span>
       </div>
       <div class="grid gap-4 xl:grid-cols-4">
-        {statuses.map((status) => {
+        {props.statusOptions.map((status) => {
           const laneUnits = props.units
             .filter((unit) => unit.status === status.key)
             .sort((a, b) => a.position - b.position || a.title.localeCompare(b.title))
@@ -1149,6 +1316,7 @@ function UnitDetailContent(props: {
       <div class="flex flex-wrap items-center gap-2">
         <span class="badge badge-primary">{typeLabels[props.unit.type]}</span>
         <span class="badge badge-outline border-base-content/40 text-base-content">{statuses.find((status) => status.key === props.unit.status)?.label}</span>
+        {props.unit.type === 'bug' && props.unit.priority && <PriorityBadge priority={props.unit.priority} />}
         {props.unit.tags.map((tag) => (
           <span class="badge badge-outline border-base-content/40 text-base-content">{tag}</span>
         ))}
@@ -1508,6 +1676,39 @@ function ApiEndpoint(props: { method: string; path: string; description: string 
   )
 }
 
+function statusLabel(status: UnitStatus) {
+  return statuses.find((item) => item.key === status)?.label || status
+}
+
+function bugPriorityRank(priority?: string) {
+  switch (priority) {
+    case 'critical':
+      return 0
+    case 'high':
+      return 1
+    case 'medium':
+      return 2
+    case 'low':
+      return 3
+    default:
+      return 4
+  }
+}
+
+function PriorityBadge(props: { priority?: string }) {
+  if (!props.priority) return null
+  const label = bugPriorities.find((item) => item.key === props.priority)?.label || props.priority
+  const badgeClass =
+    props.priority === 'critical'
+      ? 'badge-error'
+      : props.priority === 'high'
+        ? 'badge-warning'
+        : props.priority === 'medium'
+          ? 'badge-info'
+          : 'badge-ghost'
+  return <span class={`badge ${badgeClass}`}>{label}</span>
+}
+
 function parseRoute(pathname: string): AppRoute {
   const trimmed = pathname.replace(/\/+$/, '')
   const segments = (trimmed || '/').split('/').filter(Boolean)
@@ -1518,6 +1719,7 @@ function parseRoute(pathname: string): AppRoute {
   const projectId = segments[1]
   if (segments.length === 2) return { kind: 'project', projectId, view: 'kanban', chain: [] }
   if (segments[2] === 'backlog' && segments.length === 3) return { kind: 'project', projectId, view: 'backlog', chain: [] }
+  if (segments[2] === 'bugs' && segments.length === 3) return { kind: 'project', projectId, view: 'bugs', chain: [] }
   if (segments[2] === 'api' && segments.length === 3) return { kind: 'project', projectId, view: 'api', chain: [] }
   if (segments[2] === 'settings' && segments.length === 3) return { kind: 'project', projectId, view: 'settings', chain: [] }
 
@@ -1590,12 +1792,17 @@ function projectApiPath(projectId: string) {
   return `/projects/${projectId}/api`
 }
 
+function projectBugsPath(projectId: string) {
+  return `/projects/${projectId}/bugs`
+}
+
 function projectSettingsPath(projectId: string) {
   return `/projects/${projectId}/settings`
 }
 
 function projectPathForSelection(projectId: string, page: ProjectPage | null) {
   if (page === 'backlog') return projectBacklogPath(projectId)
+  if (page === 'bugs') return projectBugsPath(projectId)
   if (page === 'api') return projectApiPath(projectId)
   if (page === 'settings') return projectSettingsPath(projectId)
   return projectKanbanPath(projectId)

@@ -20,8 +20,10 @@ const (
 )
 
 var (
-	unitTypes        = []string{"epic", "feature", "story", "task"}
-	unitStatuses     = []string{"todo", "in_progress", "review", "done"}
+	unitTypes        = []string{"epic", "feature", "story", "task", "bug"}
+	unitStatuses     = []string{"triage", "todo", "in_progress", "review", "done"}
+	standardUnitStatuses = []string{"todo", "in_progress", "review", "done"}
+	bugPriorities    = []string{"critical", "high", "medium", "low"}
 	allowedChildType = map[string]string{"epic": "feature", "feature": "story", "story": "task"}
 	defaultProjectColor = "#2563eb"
 	defaultUnitColors   = map[string]string{
@@ -29,6 +31,7 @@ var (
 		"feature": "#2563eb",
 		"story":   "#0f766e",
 		"task":    "#7c3aed",
+		"bug":     "#dc2626",
 	}
 )
 
@@ -51,6 +54,7 @@ type UnitDTO struct {
 	ParentID    string    `json:"parentId,omitempty"`
 	Type        string    `json:"type"`
 	Status      string    `json:"status"`
+	Priority    string    `json:"priority,omitempty"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	Color       string    `json:"color"`
@@ -105,6 +109,7 @@ type SaveUnitRequest struct {
 	ParentID    string   `json:"parentId"`
 	Type        string   `json:"type"`
 	Status      string   `json:"status"`
+	Priority    string   `json:"priority"`
 	Title       string   `json:"title"`
 	Description string   `json:"description"`
 	Color       string   `json:"color"`
@@ -177,6 +182,7 @@ func normalizeMentions(mentions []Mention) []Mention {
 func validateUnitPayload(req SaveUnitRequest) error {
 	req.Type = strings.ToLower(strings.TrimSpace(req.Type))
 	req.Status = strings.ToLower(strings.TrimSpace(req.Status))
+	req.Priority = strings.ToLower(strings.TrimSpace(req.Priority))
 	req.Title = strings.TrimSpace(req.Title)
 	if req.Title == "" {
 		return errors.New("title is required")
@@ -186,6 +192,18 @@ func validateUnitPayload(req SaveUnitRequest) error {
 	}
 	if !contains(unitStatuses, req.Status) {
 		return fmt.Errorf("invalid status %q", req.Status)
+	}
+	if req.Type == "bug" {
+		if !contains(bugPriorities, req.Priority) {
+			return fmt.Errorf("invalid priority %q", req.Priority)
+		}
+		return nil
+	}
+	if req.Status == "triage" {
+		return errors.New("triage status is only valid for bugs")
+	}
+	if req.Priority != "" {
+		return errors.New("priority is only valid for bugs")
 	}
 	return nil
 }
@@ -219,6 +237,7 @@ func recordToUnit(record *core.Record) UnitDTO {
 		ParentID:    record.GetString("parent"),
 		Type:        record.GetString("type"),
 		Status:      record.GetString("status"),
+		Priority:    record.GetString("priority"),
 		Title:       record.GetString("title"),
 		Description: record.GetString("description"),
 		Color:       record.GetString("color"),
@@ -366,17 +385,26 @@ func parentMatchesType(parentType, childType string) bool {
 }
 
 func validateHierarchy(parent *core.Record, req SaveUnitRequest) error {
+	if req.Type == "bug" {
+		if parent != nil {
+			return errors.New("bugs cannot have a parent")
+		}
+		return nil
+	}
 	if parent == nil {
 		if req.Type != "epic" {
-			return errors.New("top-level units must be epics")
+			return errors.New("top-level items must be epics")
 		}
 		return nil
 	}
 	if parent.GetString("project") != req.ProjectID {
 		return errors.New("parent belongs to a different project")
 	}
+	if parent.GetString("type") == "bug" {
+		return errors.New("bugs cannot have child items")
+	}
 	if !parentMatchesType(parent.GetString("type"), req.Type) {
-		return fmt.Errorf("%s units can only contain %s children", parent.GetString("type"), allowedChildType[parent.GetString("type")])
+		return fmt.Errorf("%s items can only contain %s children", parent.GetString("type"), allowedChildType[parent.GetString("type")])
 	}
 	return nil
 }

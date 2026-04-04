@@ -1,5 +1,6 @@
-export type UnitType = 'epic' | 'feature' | 'story' | 'task'
-export type UnitStatus = 'todo' | 'in_progress' | 'review' | 'done'
+export type UnitType = 'epic' | 'feature' | 'story' | 'task' | 'bug'
+export type UnitStatus = 'triage' | 'todo' | 'in_progress' | 'review' | 'done'
+export type BugPriority = 'critical' | 'high' | 'medium' | 'low'
 export type UnitColors = Record<UnitType, string>
 
 export interface User {
@@ -26,6 +27,7 @@ export interface Unit {
   parentId?: string
   type: UnitType
   status: UnitStatus
+  priority?: BugPriority
   title: string
   description: string
   color: string
@@ -71,4 +73,4 @@ export interface SmartAddMessage {
   content: string
 }
 
-export type ProjectPage = 'backlog' | 'kanban' | 'api' | 'settings'
+export type ProjectPage = 'backlog' | 'kanban' | 'bugs' | 'api' | 'settings'

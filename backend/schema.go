@@ -112,6 +112,7 @@ func (s *AgilerrService) ensureUnitsCollection(_ string, _ string) (*core.Collec
 		&core.TextField{Name: "parent", Max: 32},
 		&core.SelectField{Name: "type", Required: true, Values: unitTypes},
 		&core.SelectField{Name: "status", Required: true, Values: unitStatuses},
+		&core.SelectField{Name: "priority", Values: bugPriorities},
 		&core.TextField{Name: "title", Required: true, Min: 1, Max: 200},
 		&core.TextField{Name: "description", Max: 12000},
 		&core.TextField{Name: "color", Required: true, Min: 4, Max: 24},
