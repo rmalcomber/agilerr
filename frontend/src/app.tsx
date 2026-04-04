@@ -101,6 +101,14 @@ const defaultStatusColors: StatusColors = {
   done: '#22c55e',
 }
 
+const storageKeys = {
+  lastProjectId: 'agilerr:last-project-id',
+  backlogTypes: 'agilerr:backlog-types',
+  assignedTypes: 'agilerr:assigned-types',
+  sidebarCollapsed: 'agilerr:sidebar-collapsed',
+  bugsView: 'agilerr:bugs-view',
+}
+
 type UnitDraft = {
   id?: string
   projectId: string
@@ -148,6 +156,34 @@ const emptyProjectDraft = {
   statusColors: { ...defaultStatusColors } as StatusColors,
 }
 
+function readStoredBoolean(key: string, fallback: boolean) {
+  if (typeof window === 'undefined') return fallback
+  const value = window.localStorage.getItem(key)
+  if (value === 'true') return true
+  if (value === 'false') return false
+  return fallback
+}
+
+function readStoredStringArray<T extends string>(key: string, allowed: readonly T[], fallback: T[]) {
+  if (typeof window === 'undefined') return fallback
+  const raw = window.localStorage.getItem(key)
+  if (!raw) return fallback
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return fallback
+    const filtered = parsed.filter((item): item is T => typeof item === 'string' && allowed.includes(item as T))
+    return filtered.length ? filtered : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function readStoredBugsView() {
+  if (typeof window === 'undefined') return 'kanban' as const
+  const raw = window.localStorage.getItem(storageKeys.bugsView)
+  return raw === 'list' ? 'list' : 'kanban'
+}
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
@@ -162,13 +198,13 @@ export default function App() {
   const [projectEditor, setProjectEditor] = useState(emptyProjectDraft)
   const [unitEditor, setUnitEditor] = useState<UnitDraft | null>(null)
   const [detailUnitId, setDetailUnitId] = useState<string | null>(null)
-  const [bugsView, setBugsView] = useState<'list' | 'kanban'>('kanban')
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [bugsView, setBugsView] = useState<'list' | 'kanban'>(() => readStoredBugsView())
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readStoredBoolean(storageKeys.sidebarCollapsed, false))
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
   const [backlogFilterOpen, setBacklogFilterOpen] = useState(false)
-  const [backlogTypes, setBacklogTypes] = useState<UnitType[]>(['epic', 'feature', 'story', 'task'])
+  const [backlogTypes, setBacklogTypes] = useState<UnitType[]>(() => readStoredStringArray(storageKeys.backlogTypes, ['epic', 'feature', 'story', 'task'] as const, ['epic', 'feature', 'story', 'task']))
   const [assignedFilterOpen, setAssignedFilterOpen] = useState(false)
-  const [assignedTypes, setAssignedTypes] = useState<UnitType[]>(['epic', 'feature', 'story', 'task'])
+  const [assignedTypes, setAssignedTypes] = useState<UnitType[]>(() => readStoredStringArray(storageKeys.assignedTypes, ['epic', 'feature', 'story', 'task'] as const, ['epic', 'feature', 'story', 'task']))
   const [commentBody, setCommentBody] = useState('')
   const [commentMentions, setCommentMentions] = useState<Mention[]>([])
   const [suggestions, setSuggestions] = useState<Suggestions>({ units: [], users: [], tags: [] })
@@ -212,7 +248,29 @@ export default function App() {
     return () => window.removeEventListener('mousedown', handlePointerDown)
   }, [projectMenuOpen, backlogFilterOpen, assignedFilterOpen])
 
+  useEffect(() => {
+    window.localStorage.setItem(storageKeys.sidebarCollapsed, String(sidebarCollapsed))
+  }, [sidebarCollapsed])
+
+  useEffect(() => {
+    window.localStorage.setItem(storageKeys.bugsView, bugsView)
+  }, [bugsView])
+
+  useEffect(() => {
+    window.localStorage.setItem(storageKeys.backlogTypes, JSON.stringify(backlogTypes))
+  }, [backlogTypes])
+
+  useEffect(() => {
+    window.localStorage.setItem(storageKeys.assignedTypes, JSON.stringify(assignedTypes))
+  }, [assignedTypes])
+
   const selectedProjectId = route.kind === 'project' ? route.projectId : null
+
+  useEffect(() => {
+    if (selectedProjectId) {
+      window.localStorage.setItem(storageKeys.lastProjectId, selectedProjectId)
+    }
+  }, [selectedProjectId])
 
   useEffect(() => {
     if (!selectedProjectId || !currentUser) {
@@ -222,6 +280,14 @@ export default function App() {
     void loadProject(selectedProjectId)
     void loadSuggestions(selectedProjectId)
   }, [selectedProjectId, currentUser])
+
+  useEffect(() => {
+    if (loading || !currentUser || route.kind !== 'root' || !projects.length) return
+    const storedProjectId = window.localStorage.getItem(storageKeys.lastProjectId)
+    if (!storedProjectId) return
+    if (!projects.some((project) => project.id === storedProjectId)) return
+    navigate(projectDashboardPath(storedProjectId), true)
+  }, [loading, currentUser, route.kind, projects])
 
   const units = tree?.units ?? []
   const comments = tree?.comments ?? []
