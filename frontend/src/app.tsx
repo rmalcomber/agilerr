@@ -105,6 +105,7 @@ type UnitDraft = {
   id?: string
   projectId: string
   parentId?: string
+  assigneeId?: string
   type: UnitType
   status: UnitStatus
   priority?: BugPriority
@@ -444,6 +445,7 @@ export default function App() {
     setUnitEditor({
       projectId,
       parentId: parent?.id,
+      assigneeId: undefined,
       type,
       status: 'todo',
       title: '',
@@ -455,6 +457,7 @@ export default function App() {
   function openNewBug(projectId: string) {
     setUnitEditor({
       projectId,
+      assigneeId: undefined,
       type: 'bug',
       status: 'triage',
       priority: 'medium',
@@ -469,6 +472,7 @@ export default function App() {
       id: unit.id,
       projectId: unit.projectId,
       parentId: unit.parentId,
+      assigneeId: unit.assigneeId,
       type: unit.type,
       status: unit.status,
       priority: unit.priority,
@@ -804,6 +808,7 @@ export default function App() {
                           key={`${node.unit.id}-${node.implicit ? 'implicit' : 'explicit'}`}
                           project={tree.project}
                           node={node}
+                          userById={userById}
                           commentsByUnit={commentsByUnit}
                           onOpenRoute={openUnitRoute}
                           onOpenDetails={openUnitDetails}
@@ -840,6 +845,7 @@ export default function App() {
                   project={tree.project}
                   bugs={bugUnits}
                   commentsByUnit={commentsByUnit}
+                  userById={userById}
                   bugsView={bugsView}
                   onChangeView={setBugsView}
                   onEditProject={() => navigate(projectSettingsPath(tree.project.id))}
@@ -878,6 +884,7 @@ export default function App() {
                       treeByParent={treeByParent}
                       commentsByUnit={commentsByUnit}
                       userById={userById}
+                      users={users}
                       unitById={unitById}
                       onEditProject={() => navigate(projectSettingsPath(tree.project.id))}
                       onAddEpic={() => openNewUnit(tree.project.id)}
@@ -969,6 +976,9 @@ export default function App() {
 
               <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
                 <h3 class="text-lg font-bold">Optional</h3>
+                <Field label="Assignee">
+                  <UserPicker users={users} value={unitEditor.assigneeId} onChange={(assigneeId) => setUnitEditor({ ...unitEditor, assigneeId })} />
+                </Field>
                 <Field label="Status">
                   <select class="select select-bordered w-full" value={unitEditor.status} onChange={(e) => setUnitEditor({ ...unitEditor, status: (e.currentTarget as HTMLSelectElement).value as UnitStatus })}>
                     {(unitEditor.type === 'bug' ? bugStatuses : standardStatuses).map((status) => (
@@ -1304,6 +1314,7 @@ function BugsPage(props: {
   project: Project
   bugs: Unit[]
   commentsByUnit: Map<string, Comment[]>
+  userById: Record<string, User>
   bugsView: 'list' | 'kanban'
   onChangeView: (view: 'list' | 'kanban') => void
   onEditProject: () => void
@@ -1334,10 +1345,11 @@ function BugsPage(props: {
         </div>
 
         {props.bugsView === 'list' ? (
-          <BugList project={props.project} bugs={props.bugs} commentsByUnit={props.commentsByUnit} onOpenDetails={props.onOpenDetails} onEditBug={props.onEditBug} />
+          <BugList project={props.project} bugs={props.bugs} commentsByUnit={props.commentsByUnit} userById={props.userById} onOpenDetails={props.onOpenDetails} onEditBug={props.onEditBug} />
         ) : (
           <KanbanBoard
             project={props.project}
+            userById={props.userById}
             title="Bug Board"
             subtitle="New bugs start in triage before they move into planned work."
             units={props.bugs}
@@ -1356,6 +1368,7 @@ function BugList(props: {
   project: Project
   bugs: Unit[]
   commentsByUnit: Map<string, Comment[]>
+  userById: Record<string, User>
   onOpenDetails: (unit: Unit) => void
   onEditBug: (unit: Unit) => void
 }) {
@@ -1370,6 +1383,7 @@ function BugList(props: {
                 <span class="badge badge-error">Bug</span>
                 <PriorityBadge priority={bug.priority} />
                 <span class="badge badge-outline border-base-content/40 text-base-content">{statusLabel(bug.status)}</span>
+                {bug.assigneeId && <AssigneeBadge assignee={props.userById[bug.assigneeId]} />}
               </div>
               <button class="mt-2 block text-left text-base font-semibold hover:text-primary" onClick={() => props.onOpenDetails(bug)}>
                 {bug.title}
@@ -1400,6 +1414,7 @@ function KanbanRoutePage(props: {
   treeByParent: Map<string, Unit[]>
   commentsByUnit: Map<string, Comment[]>
   userById: Record<string, User>
+  users: User[]
   unitById: Record<string, Unit>
   onEditProject: () => void
   onAddEpic: () => void
@@ -1472,6 +1487,7 @@ function KanbanRoutePage(props: {
       {!taskUnit && (
         <KanbanBoard
           project={props.project}
+          userById={props.userById}
           title={laneTitle}
           subtitle={currentUnit ? `Direct ${typeLabels[nextChildType[currentUnit.type] as UnitType] || 'Task'} children only` : 'Direct epics only'}
           units={children}
@@ -1501,6 +1517,7 @@ function KanbanRoutePage(props: {
 
 function KanbanBoard(props: {
   project: Project
+  userById: Record<string, User>
   title: string
   subtitle: string
   units: Unit[]
@@ -1540,7 +1557,7 @@ function KanbanBoard(props: {
               </div>
               <div class="space-y-3">
                 {laneUnits.map((unit) => (
-                  <UnitKanbanCard project={props.project} unit={unit} onOpenRoute={props.onOpenRoute} onOpenDetails={props.onOpenDetails} />
+                  <UnitKanbanCard project={props.project} userById={props.userById} unit={unit} onOpenRoute={props.onOpenRoute} onOpenDetails={props.onOpenDetails} />
                 ))}
                 {!laneUnits.length && <div class="rounded-xl border border-dashed border-base-300 px-3 py-5 text-center text-xs text-base-content/75">No items</div>}
               </div>
@@ -1552,7 +1569,7 @@ function KanbanBoard(props: {
   )
 }
 
-function UnitKanbanCard(props: { project: Project; unit: Unit; onOpenRoute: (unit: Unit) => void; onOpenDetails: (unit: Unit) => void }) {
+function UnitKanbanCard(props: { project: Project; userById: Record<string, User>; unit: Unit; onOpenRoute: (unit: Unit) => void; onOpenDetails: (unit: Unit) => void }) {
   return (
     <article
       draggable
@@ -1574,6 +1591,7 @@ function UnitKanbanCard(props: { project: Project; unit: Unit; onOpenRoute: (uni
       >
         {props.unit.title}
       </button>
+      {props.unit.assigneeId && <div class="mt-1.5"><AssigneeBadge assignee={props.userById[props.unit.assigneeId]} fallbackId={props.unit.assigneeId} /></div>}
       <div class="mt-1.5 line-clamp-3 text-xs text-base-content/90">{plainText(props.unit.description) || 'No description yet.'}</div>
     </article>
   )
@@ -1599,6 +1617,7 @@ function UnitDetailContent(props: {
         <span class="badge badge-primary">{typeLabels[props.unit.type]}</span>
         <span class="badge badge-outline border-base-content/40 text-base-content">{statuses.find((status) => status.key === props.unit.status)?.label}</span>
         {props.unit.type === 'bug' && props.unit.priority && <PriorityBadge priority={props.unit.priority} />}
+        {props.unit.assigneeId && <AssigneeBadge assignee={props.userById[props.unit.assigneeId]} fallbackId={props.unit.assigneeId} />}
         {props.unit.tags.map((tag) => (
           <span class="badge badge-outline border-base-content/40 text-base-content">{tag}</span>
         ))}
@@ -1782,6 +1801,61 @@ function TagEditor(props: { tags: string[]; suggestions: string[]; onChange: (ta
   )
 }
 
+function UserPicker(props: { users: User[]; value?: string; onChange: (userId?: string) => void }) {
+  const [query, setQuery] = useState('')
+  const normalized = query.trim().toLowerCase()
+  const selectedUser = props.users.find((user) => user.id === props.value)
+  const filteredUsers = props.users.filter((user) => {
+    if (!normalized) return true
+    return user.name.toLowerCase().includes(normalized) || user.email.toLowerCase().includes(normalized)
+  })
+
+  return (
+    <div class="space-y-2 rounded-xl border border-base-300 bg-base-100 p-3">
+      <input class="input input-bordered input-sm w-full" placeholder={selectedUser ? `Assigned to ${selectedUser.name}` : 'Search all users'} value={query} onInput={(e) => setQuery((e.currentTarget as HTMLInputElement).value)} />
+      <div class="flex items-center justify-between text-xs text-base-content/75">
+        <span>{selectedUser ? `Selected: ${selectedUser.name}` : 'Unassigned'}</span>
+        {props.value && (
+          <button class="link text-xs" type="button" onClick={() => props.onChange(undefined)}>
+            Clear
+          </button>
+        )}
+      </div>
+      <div class="max-h-44 space-y-1 overflow-auto">
+        {filteredUsers.map((user) => {
+          const selected = user.id === props.value
+          return (
+            <button
+              type="button"
+              class={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition ${selected ? 'bg-primary/15 text-base-content' : 'hover:bg-base-200/80'}`}
+              onClick={() => props.onChange(user.id)}
+            >
+              <img class="h-7 w-7 rounded-full" src={user.gravatar || gravatar(user.email)} alt={user.name} />
+              <span class="min-w-0 flex-1">
+                <span class="block truncate text-sm font-medium">{user.name}</span>
+                <span class="block truncate text-xs text-base-content/75">{user.email}</span>
+              </span>
+              {selected && <Check size={14} class="shrink-0 text-primary" />}
+            </button>
+          )
+        })}
+        {!filteredUsers.length && <div class="rounded-lg border border-dashed border-base-300 px-3 py-2 text-xs text-base-content/75">No users match that search.</div>}
+      </div>
+    </div>
+  )
+}
+
+function AssigneeBadge(props: { assignee?: User; fallbackId?: string }) {
+  const label = props.assignee?.name || props.assignee?.email || props.fallbackId
+  if (!label) return null
+  return (
+    <span class="inline-flex items-center gap-2 rounded-full border border-base-content/25 px-2.5 py-1 text-xs text-base-content/85">
+      <img class="h-4 w-4 rounded-full" src={props.assignee?.gravatar || gravatar(props.assignee?.email || '')} alt={label} />
+      <span class="max-w-36 truncate">{label}</span>
+    </span>
+  )
+}
+
 function ColorPicker(props: { value: string; onChange: (value: string) => void }) {
   return (
     <div class="space-y-3">
@@ -1851,6 +1925,7 @@ function CollapsibleMarkdown(props: { title: string; source: string }) {
 function UnitTreeNode(props: {
   project: Project
   node: BacklogDisplayNode
+  userById: Record<string, User>
   commentsByUnit: Map<string, Comment[]>
   onOpenRoute: (unit: Unit) => void
   onOpenDetails: (unit: Unit) => void
@@ -1886,6 +1961,7 @@ function UnitTreeNode(props: {
               <div class="mt-1.5">
                 <CompactDescription source={unit.description} />
               </div>
+              {unit.assigneeId && <div class="mt-2"><AssigneeBadge assignee={props.userById[unit.assigneeId]} fallbackId={unit.assigneeId} /></div>}
             </>
           )}
         </div>
@@ -1914,7 +1990,7 @@ function UnitTreeNode(props: {
       {!!children.length && (
         <div class="mt-4 space-y-3 border-l-2 border-base-300 pl-4">
           {children.map((child) => (
-            <UnitTreeNode project={props.project} node={child} commentsByUnit={props.commentsByUnit} onOpenRoute={props.onOpenRoute} onOpenDetails={props.onOpenDetails} onEdit={props.onEdit} onCreateChild={props.onCreateChild} />
+            <UnitTreeNode project={props.project} node={child} userById={props.userById} commentsByUnit={props.commentsByUnit} onOpenRoute={props.onOpenRoute} onOpenDetails={props.onOpenDetails} onEdit={props.onEdit} onCreateChild={props.onCreateChild} />
           ))}
         </div>
       )}

@@ -243,6 +243,7 @@ func (s *AgilerrService) handleUnitCreate(e *core.RequestEvent) error {
 	req.Tags = normalizeTags(req.Tags)
 	req.Status = firstNonEmpty(strings.TrimSpace(req.Status), "todo")
 	req.Priority = strings.ToLower(strings.TrimSpace(req.Priority))
+	req.AssigneeID = strings.TrimSpace(req.AssigneeID)
 	req.Title = strings.TrimSpace(req.Title)
 	req.Description = strings.TrimSpace(req.Description)
 	if strings.EqualFold(req.Type, "bug") && req.Status == "todo" {
@@ -254,6 +255,9 @@ func (s *AgilerrService) handleUnitCreate(e *core.RequestEvent) error {
 		return notFound(e, "project not found")
 	}
 	if err := validateUnitPayload(req); err != nil {
+		return badRequest(e, err.Error(), err)
+	}
+	if err := validateAssignee(s.app, req.AssigneeID); err != nil {
 		return badRequest(e, err.Error(), err)
 	}
 
@@ -273,6 +277,7 @@ func (s *AgilerrService) handleUnitCreate(e *core.RequestEvent) error {
 	record := core.NewRecord(collection)
 	record.Set("project", req.ProjectID)
 	record.Set("parent", strings.TrimSpace(req.ParentID))
+	record.Set("assignee", req.AssigneeID)
 	record.Set("type", strings.ToLower(req.Type))
 	record.Set("status", strings.ToLower(req.Status))
 	record.Set("priority", req.Priority)
@@ -307,11 +312,15 @@ func (s *AgilerrService) handleUnitUpdate(e *core.RequestEvent) error {
 	req.Type = firstNonEmpty(strings.TrimSpace(req.Type), unitRecord.GetString("type"))
 	req.Status = firstNonEmpty(strings.TrimSpace(req.Status), unitRecord.GetString("status"))
 	req.Priority = firstNonEmpty(strings.TrimSpace(req.Priority), unitRecord.GetString("priority"))
+	req.AssigneeID = strings.TrimSpace(firstNonEmpty(req.AssigneeID, unitRecord.GetString("assignee")))
 	req.Title = firstNonEmpty(strings.TrimSpace(req.Title), unitRecord.GetString("title"))
 	req.Description = strings.TrimSpace(req.Description)
 	req.Tags = normalizeTags(req.Tags)
 
 	if err := validateUnitPayload(req); err != nil {
+		return badRequest(e, err.Error(), err)
+	}
+	if err := validateAssignee(s.app, req.AssigneeID); err != nil {
 		return badRequest(e, err.Error(), err)
 	}
 	projectRecord, err := findProject(s.app, req.ProjectID)
@@ -332,6 +341,7 @@ func (s *AgilerrService) handleUnitUpdate(e *core.RequestEvent) error {
 
 	unitRecord.Set("project", req.ProjectID)
 	unitRecord.Set("parent", req.ParentID)
+	unitRecord.Set("assignee", req.AssigneeID)
 	unitRecord.Set("type", req.Type)
 	unitRecord.Set("status", req.Status)
 	unitRecord.Set("priority", req.Priority)
@@ -346,6 +356,16 @@ func (s *AgilerrService) handleUnitUpdate(e *core.RequestEvent) error {
 	unitRecord = unitRecord.Fresh()
 
 	return e.JSON(http.StatusOK, map[string]any{"unit": recordToUnit(unitRecord)})
+}
+
+func validateAssignee(app *pocketbase.PocketBase, assigneeID string) error {
+	if strings.TrimSpace(assigneeID) == "" {
+		return nil
+	}
+	if _, err := app.FindRecordById(collectionUsers, assigneeID); err != nil {
+		return errors.New("assignee not found")
+	}
+	return nil
 }
 
 func (s *AgilerrService) handleUnitMove(e *core.RequestEvent) error {

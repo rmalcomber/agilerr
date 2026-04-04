@@ -61,6 +61,7 @@ type UnitDTO struct {
 	ID          string    `json:"id"`
 	ProjectID   string    `json:"projectId"`
 	ParentID    string    `json:"parentId,omitempty"`
+	AssigneeID  string    `json:"assigneeId,omitempty"`
 	Type        string    `json:"type"`
 	Status      string    `json:"status"`
 	Priority    string    `json:"priority,omitempty"`
@@ -117,6 +118,7 @@ type CreateProjectRequest struct {
 type SaveUnitRequest struct {
 	ProjectID   string   `json:"projectId"`
 	ParentID    string   `json:"parentId"`
+	AssigneeID  string   `json:"assigneeId"`
 	Type        string   `json:"type"`
 	Status      string   `json:"status"`
 	Priority    string   `json:"priority"`
@@ -193,6 +195,7 @@ func validateUnitPayload(req SaveUnitRequest) error {
 	req.Type = strings.ToLower(strings.TrimSpace(req.Type))
 	req.Status = strings.ToLower(strings.TrimSpace(req.Status))
 	req.Priority = strings.ToLower(strings.TrimSpace(req.Priority))
+	req.AssigneeID = strings.TrimSpace(req.AssigneeID)
 	req.Title = strings.TrimSpace(req.Title)
 	if req.Title == "" {
 		return errors.New("title is required")
@@ -246,6 +249,7 @@ func recordToUnit(record *core.Record) UnitDTO {
 		ID:          record.Id,
 		ProjectID:   record.GetString("project"),
 		ParentID:    record.GetString("parent"),
+		AssigneeID:  record.GetString("assignee"),
 		Type:        record.GetString("type"),
 		Status:      record.GetString("status"),
 		Priority:    record.GetString("priority"),

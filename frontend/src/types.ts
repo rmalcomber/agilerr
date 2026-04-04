@@ -27,6 +27,7 @@ export interface Unit {
   id: string
   projectId: string
   parentId?: string
+  assigneeId?: string
   type: UnitType
   status: UnitStatus
   priority?: BugPriority
