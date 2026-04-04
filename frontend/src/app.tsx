@@ -167,6 +167,8 @@ export default function App() {
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
   const [backlogFilterOpen, setBacklogFilterOpen] = useState(false)
   const [backlogTypes, setBacklogTypes] = useState<UnitType[]>(['epic', 'feature', 'story', 'task'])
+  const [assignedFilterOpen, setAssignedFilterOpen] = useState(false)
+  const [assignedTypes, setAssignedTypes] = useState<UnitType[]>(['epic', 'feature', 'story', 'task'])
   const [commentBody, setCommentBody] = useState('')
   const [commentMentions, setCommentMentions] = useState<Mention[]>([])
   const [suggestions, setSuggestions] = useState<Suggestions>({ units: [], users: [], tags: [] })
@@ -174,6 +176,8 @@ export default function App() {
   const projectMenuButtonRef = useRef<HTMLButtonElement | null>(null)
   const backlogFilterRef = useRef<HTMLDivElement | null>(null)
   const backlogFilterButtonRef = useRef<HTMLButtonElement | null>(null)
+  const assignedFilterRef = useRef<HTMLDivElement | null>(null)
+  const assignedFilterButtonRef = useRef<HTMLButtonElement | null>(null)
 
   useEffect(() => {
     void loadSession()
@@ -189,7 +193,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!projectMenuOpen && !backlogFilterOpen) return
+    if (!projectMenuOpen && !backlogFilterOpen && !assignedFilterOpen) return
     function handlePointerDown(event: MouseEvent) {
       if (projectMenuOpen && !projectMenuRef.current?.contains(event.target as Node)) {
         setProjectMenuOpen(false)
@@ -199,10 +203,14 @@ export default function App() {
         setBacklogFilterOpen(false)
         backlogFilterButtonRef.current?.blur()
       }
+      if (assignedFilterOpen && !assignedFilterRef.current?.contains(event.target as Node)) {
+        setAssignedFilterOpen(false)
+        assignedFilterButtonRef.current?.blur()
+      }
     }
     window.addEventListener('mousedown', handlePointerDown)
     return () => window.removeEventListener('mousedown', handlePointerDown)
-  }, [projectMenuOpen, backlogFilterOpen])
+  }, [projectMenuOpen, backlogFilterOpen, assignedFilterOpen])
 
   const selectedProjectId = route.kind === 'project' ? route.projectId : null
 
@@ -824,12 +832,22 @@ export default function App() {
 
               {route.view === 'dashboard' && (
                 <ProjectDashboardPage
+                  currentUser={currentUser}
                   project={tree.project}
                   units={standardUnits}
                   bugs={bugUnits}
                   comments={comments}
+                  assignedFilterOpen={assignedFilterOpen}
+                  assignedTypes={assignedTypes}
                   onEditProject={() => navigate(projectSettingsPath(tree.project.id))}
                   onAddPrimary={() => openNewUnit(tree.project.id)}
+                  onToggleAssignedFilter={() => {
+                    setAssignedFilterOpen((current) => !current)
+                    assignedFilterButtonRef.current?.blur()
+                  }}
+                  onAssignedTypesChange={setAssignedTypes}
+                  assignedFilterRef={assignedFilterRef}
+                  assignedFilterButtonRef={assignedFilterButtonRef}
                 />
               )}
 
@@ -1129,14 +1147,27 @@ function ProjectHero(props: { project: Project; tags: string[]; onEdit: () => vo
 }
 
 function ProjectDashboardPage(props: {
+  currentUser: User
   project: Project
   units: Unit[]
   bugs: Unit[]
   comments: Comment[]
+  assignedFilterOpen: boolean
+  assignedTypes: UnitType[]
   onEditProject: () => void
   onAddPrimary: () => void
+  onToggleAssignedFilter: () => void
+  onAssignedTypesChange: (types: UnitType[]) => void
+  assignedFilterRef: { current: HTMLDivElement | null }
+  assignedFilterButtonRef: { current: HTMLButtonElement | null }
 }) {
+  const assignedSelection = new Set(props.assignedTypes)
+  const unitIndex = Object.fromEntries(props.units.concat(props.bugs).map((item) => [item.id, item]))
   const standardStatusesForCounts = ['todo', 'in_progress', 'review', 'done'] as UnitStatus[]
+  const assignedItems = [...props.units, ...props.bugs]
+    .filter((unit) => unit.assigneeId === props.currentUser.id && assignedSelection.has(unit.type))
+    .sort((a, b) => b.updated.localeCompare(a.updated))
+    .slice(0, 6)
   const typeCounts = {
     epic: props.units.filter((unit) => unit.type === 'epic').length,
     feature: props.units.filter((unit) => unit.type === 'feature').length,
@@ -1185,6 +1216,78 @@ function ProjectDashboardPage(props: {
               <MetricCard label="Comments" value={props.comments.length} accent={props.project.color} compact />
             </div>
           </div>
+        </div>
+      </section>
+
+      <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">Assigned to you</p>
+            <h2 class="mt-2 text-xl font-black">Your items</h2>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="relative" ref={props.assignedFilterRef}>
+              <button
+                ref={props.assignedFilterButtonRef}
+                class="btn btn-outline btn-xs h-8 min-h-8 gap-2"
+                onClick={props.onToggleAssignedFilter}
+                title="Filter assigned item types"
+                aria-label="Filter assigned item types"
+              >
+                <ListFilter size={14} />
+                Filter
+              </button>
+              {props.assignedFilterOpen && (
+                <div class="absolute right-0 top-full z-20 mt-2 w-56 rounded-xl border border-base-300 bg-base-100 p-2 shadow-xl">
+                  <div class="mb-2 px-2 text-xs font-semibold uppercase tracking-[0.2em] text-base-content/75">Visible types</div>
+                  <div class="space-y-1">
+                    {(['epic', 'feature', 'story', 'task'] as UnitType[]).map((type) => {
+                      const selected = props.assignedTypes.includes(type)
+                      return (
+                        <button
+                          class={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition hover:bg-base-200 ${selected ? 'bg-base-200/80 text-base-content' : 'text-base-content/80'}`}
+                          onClick={() =>
+                            props.onAssignedTypesChange(
+                              selected
+                                ? props.assignedTypes.length === 1
+                                  ? props.assignedTypes
+                                  : props.assignedTypes.filter((item) => item !== type)
+                                : [...props.assignedTypes, type],
+                            )
+                          }
+                        >
+                          <span>{typeLabels[type]}</span>
+                          <span class={`inline-flex h-5 w-5 items-center justify-center rounded-md border ${selected ? 'border-primary bg-primary text-primary-content' : 'border-base-300 text-transparent'}`}>
+                            <Check size={12} />
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+            <span class="text-sm text-base-content/75">{assignedItems.length} showing</span>
+          </div>
+        </div>
+        <div class="space-y-3">
+          {assignedItems.map((unit) => (
+            <a href={unit.type === 'bug' ? projectBugsPath(props.project.id) : buildUnitPath(props.project.id, unitIndex, unit.id)} class="flex items-center justify-between gap-3 rounded-xl border border-base-300 bg-base-100 p-3 transition hover:border-primary/50 hover:bg-base-200/40">
+              <div class="min-w-0">
+                <div class="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-base-content/75">
+                  <span class="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: unit.color }} />
+                  <span>{typeLabels[unit.type]}</span>
+                  <span class="rounded-full px-2 py-0.5 text-[11px]" style={{ backgroundColor: `${props.project.statusColors[unit.status]}22`, color: props.project.statusColors[unit.status] }}>
+                    {statusLabel(unit.status)}
+                  </span>
+                </div>
+                <div class="mt-1 truncate text-sm font-semibold">{unit.title}</div>
+                <div class="mt-1 line-clamp-1 text-xs text-base-content/75">{plainText(unit.description) || 'No description yet.'}</div>
+              </div>
+              <ChevronRight class="shrink-0 text-base-content/45" size={18} />
+            </a>
+          ))}
+          {!assignedItems.length && <div class="rounded-xl border border-dashed border-base-300 p-4 text-sm text-base-content/80">No items match the current filter for your assignments.</div>}
         </div>
       </section>
 
