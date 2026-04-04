@@ -125,6 +125,7 @@ type UnitDraft = {
 
 type AppRoute =
   | { kind: 'root' }
+  | { kind: 'api' }
   | {
       kind: 'project'
       projectId: string
@@ -199,6 +200,7 @@ export default function App() {
   const [projectEditor, setProjectEditor] = useState(emptyProjectDraft)
   const [unitEditor, setUnitEditor] = useState<UnitDraft | null>(null)
   const [detailUnitId, setDetailUnitId] = useState<string | null>(null)
+  const [apiProjectId, setApiProjectId] = useState<string>(() => (typeof window === 'undefined' ? '' : window.localStorage.getItem(storageKeys.lastProjectId) || ''))
   const [bugsView, setBugsView] = useState<'list' | 'kanban'>(() => readStoredBugsView())
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readStoredBoolean(storageKeys.sidebarCollapsed, false))
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
@@ -265,13 +267,24 @@ export default function App() {
     window.localStorage.setItem(storageKeys.assignedTypes, JSON.stringify(assignedTypes))
   }, [assignedTypes])
 
-  const selectedProjectId = route.kind === 'project' ? route.projectId : null
+  const selectedProjectId = route.kind === 'project' ? route.projectId : route.kind === 'api' ? apiProjectId : null
 
   useEffect(() => {
     if (selectedProjectId) {
       window.localStorage.setItem(storageKeys.lastProjectId, selectedProjectId)
     }
   }, [selectedProjectId])
+
+  useEffect(() => {
+    if (!projects.length) return
+    if (apiProjectId && projects.some((project) => project.id === apiProjectId)) return
+    const fallback = window.localStorage.getItem(storageKeys.lastProjectId)
+    if (fallback && projects.some((project) => project.id === fallback)) {
+      setApiProjectId(fallback)
+      return
+    }
+    setApiProjectId(projects[0].id)
+  }, [projects, apiProjectId])
 
   useEffect(() => {
     if (!selectedProjectId || !currentUser) {
@@ -655,6 +668,7 @@ export default function App() {
   }
 
   const activePage = route.kind === 'project' ? route.view : null
+  const apiPageActive = route.kind === 'api' || activePage === 'api'
   const projectRouteInvalid = route.kind === 'project' && route.view === 'kanban' && routeContext?.invalid
 
   return (
@@ -711,7 +725,13 @@ export default function App() {
                       <button
                         class={selectedProjectId === project.id ? 'active' : ''}
                         onClick={() => {
-                          navigate(projectPathForSelection(project.id, activePage))
+                          if (route.kind === 'api') {
+                            setApiProjectId(project.id)
+                            window.localStorage.setItem(storageKeys.lastProjectId, project.id)
+                            navigate(apiPath())
+                          } else {
+                            navigate(projectPathForSelection(project.id, activePage))
+                          }
                           setProjectMenuOpen(false)
                           projectMenuButtonRef.current?.blur()
                         }}
@@ -789,7 +809,7 @@ export default function App() {
               <div class={`mt-3 border-t border-base-300/70 pt-3 ${sidebarCollapsed ? 'w-full' : ''}`}>
                 <ul class={`menu rounded-box bg-base-100/75 p-2 ${sidebarCollapsed ? 'items-center' : ''}`}>
                   <li>
-                    <button class={`${activePage === 'api' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(projectApiPath(selectedProjectId))} title="API" aria-label="API">
+                    <button class={`${apiPageActive ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(apiPath())} title="API" aria-label="API">
                       <SquarePen size={16} />
                       {!sidebarCollapsed && <span>API</span>}
                     </button>
@@ -825,6 +845,27 @@ export default function App() {
               onCreate={() => setProjectModalOpen(true)}
               onOpen={(projectId) => navigate(projectDashboardPath(projectId))}
             />
+          )}
+
+          {route.kind === 'api' && (
+            <>
+              {!tree ? (
+                <div class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-6 shadow-panel">Loading API context…</div>
+              ) : (
+                <>
+                  <section class="mb-5 rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+                    <div class="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">API</p>
+                        <h1 class="mt-2 text-2xl font-black">Interactive API docs</h1>
+                        <p class="mt-2 max-w-3xl text-sm text-base-content/85">The docs are top-level now. Use the endpoint dropdowns to swap project and item placeholders without changing the route.</p>
+                      </div>
+                    </div>
+                  </section>
+                  <ApiDocsPage project={tree.project} projects={projects} units={units} />
+                </>
+              )}
+            </>
           )}
 
           {route.kind === 'project' && !tree && <div class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-6 shadow-panel">Loading project…</div>}
@@ -924,13 +965,6 @@ export default function App() {
                   assignedFilterRef={assignedFilterRef}
                   assignedFilterButtonRef={assignedFilterButtonRef}
                 />
-              )}
-
-              {route.view === 'api' && (
-                <>
-                  <ProjectHero project={tree.project} tags={tree.tags} onEdit={() => navigate(projectSettingsPath(tree.project.id))} onAddPrimary={() => openNewUnit(tree.project.id)} addLabel="Add epic" addTitle="Add epic" />
-                  <ApiDocsPage project={tree.project} projects={projects} units={units} />
-                </>
               )}
 
               {route.view === 'bugs' && (
@@ -1253,7 +1287,7 @@ function ProjectDashboardPage(props: {
   const quickLinks = [
     { title: 'Kanban', body: 'Open the live delivery board and move work between lanes.', path: projectKanbanPath(props.project.id), icon: FolderKanban },
     { title: 'Backlog', body: 'Browse the hierarchy, filter by type, and expand the work breakdown.', path: projectBacklogPath(props.project.id), icon: BookOpen },
-    { title: 'API', body: 'See the available endpoints for local integrations and automation.', path: projectApiPath(props.project.id), icon: SquarePen },
+    { title: 'API', body: 'See the available endpoints for local integrations and automation.', path: apiPath(), icon: SquarePen },
   ]
 
   return (
@@ -2499,6 +2533,7 @@ function parseRoute(pathname: string): AppRoute {
   const segments = (trimmed || '/').split('/').filter(Boolean)
 
   if (!segments.length) return { kind: 'root' }
+  if (segments[0] === 'api' && segments.length === 1) return { kind: 'api' }
   if (segments[0] !== 'projects' || !segments[1]) return { kind: 'root' }
 
   const projectId = segments[1]
@@ -2578,8 +2613,8 @@ function projectBacklogPath(projectId: string) {
   return `/projects/${projectId}/backlog`
 }
 
-function projectApiPath(projectId: string) {
-  return `/projects/${projectId}/api`
+function apiPath() {
+  return '/api'
 }
 
 function projectBugsPath(projectId: string) {
@@ -2595,7 +2630,6 @@ function projectPathForSelection(projectId: string, page: ProjectPage | null) {
   if (page === 'backlog') return projectBacklogPath(projectId)
   if (page === 'kanban') return projectKanbanPath(projectId)
   if (page === 'bugs') return projectBugsPath(projectId)
-  if (page === 'api') return projectApiPath(projectId)
   if (page === 'settings') return projectSettingsPath(projectId)
   return projectDashboardPath(projectId)
 }
