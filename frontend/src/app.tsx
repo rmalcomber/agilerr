@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import {
   ArrowRight,
   BookOpen,
+  Check,
   ChevronLeft,
   ChevronDown,
   ChevronRight,
@@ -10,6 +11,7 @@ import {
   FolderKanban,
   Bug,
   LayoutGrid,
+  ListFilter,
   List,
   LogOut,
   Pencil,
@@ -129,6 +131,12 @@ type RouteContext = {
   invalid: boolean
 }
 
+type BacklogDisplayNode = {
+  unit: Unit
+  implicit: boolean
+  children: BacklogDisplayNode[]
+}
+
 const emptyProjectDraft = {
   name: '',
   description: '',
@@ -155,11 +163,15 @@ export default function App() {
   const [bugsView, setBugsView] = useState<'list' | 'kanban'>('kanban')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
+  const [backlogFilterOpen, setBacklogFilterOpen] = useState(false)
+  const [backlogTypes, setBacklogTypes] = useState<UnitType[]>(['epic', 'feature', 'story', 'task'])
   const [commentBody, setCommentBody] = useState('')
   const [commentMentions, setCommentMentions] = useState<Mention[]>([])
   const [suggestions, setSuggestions] = useState<Suggestions>({ units: [], users: [], tags: [] })
   const projectMenuRef = useRef<HTMLDivElement | null>(null)
   const projectMenuButtonRef = useRef<HTMLButtonElement | null>(null)
+  const backlogFilterRef = useRef<HTMLDivElement | null>(null)
+  const backlogFilterButtonRef = useRef<HTMLButtonElement | null>(null)
 
   useEffect(() => {
     void loadSession()
@@ -175,16 +187,20 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!projectMenuOpen) return
+    if (!projectMenuOpen && !backlogFilterOpen) return
     function handlePointerDown(event: MouseEvent) {
-      if (!projectMenuRef.current?.contains(event.target as Node)) {
+      if (projectMenuOpen && !projectMenuRef.current?.contains(event.target as Node)) {
         setProjectMenuOpen(false)
         projectMenuButtonRef.current?.blur()
+      }
+      if (backlogFilterOpen && !backlogFilterRef.current?.contains(event.target as Node)) {
+        setBacklogFilterOpen(false)
+        backlogFilterButtonRef.current?.blur()
       }
     }
     window.addEventListener('mousedown', handlePointerDown)
     return () => window.removeEventListener('mousedown', handlePointerDown)
-  }, [projectMenuOpen])
+  }, [projectMenuOpen, backlogFilterOpen])
 
   const selectedProjectId = route.kind === 'project' ? route.projectId : null
 
@@ -227,6 +243,10 @@ export default function App() {
     }
     return map
   }, [standardUnits])
+  const backlogSelection = useMemo(() => new Set(backlogTypes), [backlogTypes])
+  const backlogNodes = useMemo(() => {
+    return (treeByParent.get('root') || []).flatMap((unit) => buildBacklogNodes(unit, treeByParent, backlogSelection, false))
+  }, [treeByParent, backlogSelection])
   const routeContext = useMemo<RouteContext | null>(() => {
     if (route.kind !== 'project') return null
     return resolveRouteContext(route, unitById)
@@ -723,15 +743,60 @@ export default function App() {
                   <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-4 shadow-panel">
                     <div class="mb-4 flex items-center justify-between">
                       <h2 class="text-lg font-bold">Backlog</h2>
-                      <span class="text-xs text-base-content/75">{standardUnits.length} items</span>
+                      <div class="flex items-center gap-3">
+                        <div class="relative" ref={backlogFilterRef}>
+                          <button
+                            ref={backlogFilterButtonRef}
+                            class="btn btn-outline btn-xs h-8 min-h-8 gap-2"
+                            onClick={() => {
+                              setBacklogFilterOpen((current) => !current)
+                              backlogFilterButtonRef.current?.blur()
+                            }}
+                            title="Filter backlog item types"
+                            aria-label="Filter backlog item types"
+                          >
+                            <ListFilter size={14} />
+                            Filter
+                          </button>
+                          {backlogFilterOpen && (
+                            <div class="absolute right-0 top-full z-20 mt-2 w-56 rounded-xl border border-base-300 bg-base-100 p-2 shadow-xl">
+                              <div class="mb-2 px-2 text-xs font-semibold uppercase tracking-[0.2em] text-base-content/75">Visible types</div>
+                              <div class="space-y-1">
+                                {(['epic', 'feature', 'story', 'task'] as UnitType[]).map((type) => {
+                                  const selected = backlogTypes.includes(type)
+                                  return (
+                                    <button
+                                      class={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-sm transition hover:bg-base-200 ${selected ? 'bg-base-200/80 text-base-content' : 'text-base-content/80'}`}
+                                      onClick={() =>
+                                        setBacklogTypes((current) => {
+                                          const exists = current.includes(type)
+                                          if (exists) {
+                                            return current.length === 1 ? current : current.filter((item) => item !== type)
+                                          }
+                                          return [...current, type]
+                                        })
+                                      }
+                                    >
+                                      <span>{typeLabels[type]}</span>
+                                      <span class={`inline-flex h-5 w-5 items-center justify-center rounded-md border ${selected ? 'border-primary bg-primary text-primary-content' : 'border-base-300 text-transparent'}`}>
+                                        <Check size={12} />
+                                      </span>
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        <span class="text-xs text-base-content/75">{countBacklogNodes(backlogNodes)} items</span>
+                      </div>
                     </div>
                     <div class="space-y-3">
-                      {(treeByParent.get('root') || []).map((unit) => (
+                      {backlogNodes.map((node) => (
                         <UnitTreeNode
-                          key={unit.id}
+                          key={`${node.unit.id}-${node.implicit ? 'implicit' : 'explicit'}`}
                           project={tree.project}
-                          unit={unit}
-                          treeByParent={treeByParent}
+                          node={node}
                           commentsByUnit={commentsByUnit}
                           onOpenRoute={openUnitRoute}
                           onOpenDetails={openUnitDetails}
@@ -739,7 +804,7 @@ export default function App() {
                           onCreateChild={(target) => openNewUnit(tree.project.id, target)}
                         />
                       ))}
-                      {!standardUnits.length && <div class="rounded-xl border border-dashed border-base-300 p-3 text-xs text-base-content/80">No items yet. Start with an Epic.</div>}
+                      {!backlogNodes.length && <div class="rounded-xl border border-dashed border-base-300 p-3 text-xs text-base-content/80">No items match the current filter.</div>}
                     </div>
                   </section>
                 </>
@@ -1669,61 +1734,119 @@ function CollapsibleMarkdown(props: { title: string; source: string }) {
 
 function UnitTreeNode(props: {
   project: Project
-  unit: Unit
-  treeByParent: Map<string, Unit[]>
+  node: BacklogDisplayNode
   commentsByUnit: Map<string, Comment[]>
   onOpenRoute: (unit: Unit) => void
   onOpenDetails: (unit: Unit) => void
   onEdit: (unit: Unit) => void
   onCreateChild: (unit: Unit) => void
 }) {
-  const children = props.treeByParent.get(props.unit.id) || []
+  const { node } = props
+  const { unit, implicit, children } = node
   return (
-    <div class="rounded-xl border border-base-300 bg-base-100 p-3" style={statusBorderStyle(props.project, props.unit.status)}>
+    <div
+      class={`rounded-xl border border-base-300 p-3 ${implicit ? 'bg-base-200/30 opacity-70' : 'bg-base-100'}`}
+      style={statusBorderStyle(props.project, unit.status)}
+    >
       <div class="flex flex-wrap items-start justify-between gap-3">
-        <div class="min-w-0 flex-1 cursor-pointer" onClick={() => props.onOpenRoute(props.unit)}>
-          <div class="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-base-content/75">
-            <span class="h-3 w-3 rounded-full" style={{ backgroundColor: props.unit.color }} />
-            <span>{typeLabels[props.unit.type]}</span>
+        <div class={`min-w-0 flex-1 ${implicit ? '' : 'cursor-pointer'}`} onClick={() => !implicit && props.onOpenRoute(unit)}>
+          <div class={`flex items-center gap-2 uppercase tracking-[0.2em] text-base-content/75 ${implicit ? 'text-[10px]' : 'text-xs'}`}>
+            <span class={`${implicit ? 'h-2.5 w-2.5' : 'h-3 w-3'} rounded-full`} style={{ backgroundColor: unit.color }} />
+            <span>{typeLabels[unit.type]}</span>
           </div>
-          <button
-            class="mt-1.5 block text-left text-base font-semibold hover:text-primary"
-            onClick={(event) => {
-              event.stopPropagation()
-              props.onOpenDetails(props.unit)
-            }}
-          >
-            {props.unit.title}
-          </button>
-          <div class="mt-1.5 text-xs text-base-content/90">{plainText(props.unit.description) || 'No description yet.'}</div>
-        </div>
-        <div class="flex gap-2">
-          <button class="btn btn-outline btn-xs" onClick={() => props.onEdit(props.unit)} title="Edit item" aria-label="Edit item">
-            <Pencil size={14} />
-          </button>
-          {nextChildType[props.unit.type] && (
-            <button class="btn btn-primary btn-xs" onClick={() => props.onCreateChild(props.unit)} title="Add child" aria-label="Add child">
-              <Plus size={14} />
-            </button>
+          {implicit ? (
+            <div class="mt-1 text-sm font-semibold text-base-content/80">{unit.title}</div>
+          ) : (
+            <>
+              <button
+                class="mt-1.5 block text-left text-base font-semibold hover:text-primary"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  props.onOpenDetails(unit)
+                }}
+              >
+                {unit.title}
+              </button>
+              <div class="mt-1.5">
+                <CompactDescription source={unit.description} />
+              </div>
+            </>
           )}
         </div>
+        {!implicit && (
+          <div class="flex gap-2">
+            <button class="btn btn-outline btn-xs" onClick={() => props.onEdit(unit)} title="Edit item" aria-label="Edit item">
+              <Pencil size={14} />
+            </button>
+            {nextChildType[unit.type] && (
+              <button class="btn btn-primary btn-xs" onClick={() => props.onCreateChild(unit)} title="Add child" aria-label="Add child">
+                <Plus size={14} />
+              </button>
+            )}
+          </div>
+        )}
       </div>
-      <div class="mt-3 flex flex-wrap gap-2">
-        <span class="badge badge-outline border-base-content/40 text-base-content">{statuses.find((status) => status.key === props.unit.status)?.label}</span>
-        <span class="badge badge-outline border-base-content/40 text-base-content">{props.commentsByUnit.get(props.unit.id)?.length || 0} comments</span>
-        {props.unit.tags.map((tag) => (
-          <span class="badge">{tag}</span>
-        ))}
-      </div>
+      {!implicit && (
+        <div class="mt-3 flex flex-wrap gap-2">
+          <span class="badge badge-outline border-base-content/40 text-base-content">{statuses.find((status) => status.key === unit.status)?.label}</span>
+          <span class="badge badge-outline border-base-content/40 text-base-content">{props.commentsByUnit.get(unit.id)?.length || 0} comments</span>
+          {unit.tags.map((tag) => (
+            <span class="badge">{tag}</span>
+          ))}
+        </div>
+      )}
       {!!children.length && (
         <div class="mt-4 space-y-3 border-l-2 border-base-300 pl-4">
           {children.map((child) => (
-            <UnitTreeNode project={props.project} unit={child} treeByParent={props.treeByParent} commentsByUnit={props.commentsByUnit} onOpenRoute={props.onOpenRoute} onOpenDetails={props.onOpenDetails} onEdit={props.onEdit} onCreateChild={props.onCreateChild} />
+            <UnitTreeNode project={props.project} node={child} commentsByUnit={props.commentsByUnit} onOpenRoute={props.onOpenRoute} onOpenDetails={props.onOpenDetails} onEdit={props.onEdit} onCreateChild={props.onCreateChild} />
           ))}
         </div>
       )}
     </div>
   )
+}
+
+function CompactDescription(props: { source: string }) {
+  const preview = plainText(props.source)
+  if (!preview) {
+    return <div class="text-xs text-base-content/75">No description yet.</div>
+  }
+
+  return (
+    <details class="group max-w-full">
+      <summary class="flex cursor-pointer list-none items-start gap-2 text-xs text-base-content/90">
+        <span class="line-clamp-2 flex-1">{preview}</span>
+        <span class="tooltip tooltip-left shrink-0" data-tip="Expand description">
+          <span class="inline-flex h-5 w-5 items-center justify-center rounded-md border border-base-300 bg-base-200/60 text-base-content/75">
+            <ChevronRight class="group-open:hidden" size={12} />
+            <ChevronDown class="hidden group-open:block" size={12} />
+          </span>
+        </span>
+      </summary>
+      <div class="mt-2 rounded-lg border border-base-300 bg-base-200/40 p-2">
+        <Markdown source={props.source} />
+      </div>
+    </details>
+  )
+}
+
+function buildBacklogNodes(unit: Unit, treeByParent: Map<string, Unit[]>, selectedTypes: Set<UnitType>, hasVisibleAncestor: boolean): BacklogDisplayNode[] {
+  const selected = selectedTypes.has(unit.type)
+  const children = (treeByParent.get(unit.id) || []).flatMap((child) => buildBacklogNodes(child, treeByParent, selectedTypes, hasVisibleAncestor || selected))
+  if (selected) {
+    return [{ unit, implicit: false, children }]
+  }
+  if (!children.length) {
+    return []
+  }
+  if (hasVisibleAncestor) {
+    return [{ unit, implicit: true, children }]
+  }
+  return children
+}
+
+function countBacklogNodes(nodes: BacklogDisplayNode[]): number {
+  return nodes.reduce((total, node) => total + 1 + countBacklogNodes(node.children), 0)
 }
 
 function ApiDocsPage(props: { projectId: string }) {
