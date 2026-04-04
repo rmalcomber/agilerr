@@ -123,6 +123,7 @@ func (s *AgilerrService) handleProjectCreate(e *core.RequestEvent) error {
 	record.Set("description", strings.TrimSpace(req.Description))
 	record.Set("color", firstNonEmpty(strings.TrimSpace(req.Color), defaultProjectColor))
 	record.Set("tags", normalizeTags(req.Tags))
+	record.Set("unitColors", normalizeUnitColors(req.UnitColors))
 
 	if err := s.app.Save(record); err != nil {
 		return badRequest(e, "failed to save project", err)
@@ -152,9 +153,13 @@ func (s *AgilerrService) handleProjectUpdate(e *core.RequestEvent) error {
 	projectRecord.Set("description", strings.TrimSpace(req.Description))
 	projectRecord.Set("color", firstNonEmpty(strings.TrimSpace(req.Color), projectRecord.GetString("color"), defaultProjectColor))
 	projectRecord.Set("tags", normalizeTags(req.Tags))
+	projectRecord.Set("unitColors", normalizeUnitColors(req.UnitColors))
 
 	if err := s.app.Save(projectRecord); err != nil {
 		return badRequest(e, "failed to update project", err)
+	}
+	if err := s.syncProjectItemColors(projectRecord); err != nil {
+		return serverError(e, err)
 	}
 	projectRecord = projectRecord.Fresh()
 
@@ -234,12 +239,12 @@ func (s *AgilerrService) handleUnitCreate(e *core.RequestEvent) error {
 	}
 	req.ProjectID = projectID
 	req.Tags = normalizeTags(req.Tags)
-	req.Color = firstNonEmpty(strings.TrimSpace(req.Color), defaultUnitColor)
 	req.Status = firstNonEmpty(strings.TrimSpace(req.Status), "todo")
 	req.Title = strings.TrimSpace(req.Title)
 	req.Description = strings.TrimSpace(req.Description)
 
-	if _, err := findProject(s.app, projectID); err != nil {
+	projectRecord, err := findProject(s.app, projectID)
+	if err != nil {
 		return notFound(e, "project not found")
 	}
 	if err := validateUnitPayload(req); err != nil {
@@ -266,7 +271,7 @@ func (s *AgilerrService) handleUnitCreate(e *core.RequestEvent) error {
 	record.Set("status", strings.ToLower(req.Status))
 	record.Set("title", req.Title)
 	record.Set("description", req.Description)
-	record.Set("color", req.Color)
+	record.Set("color", projectColorForType(projectRecord, req.Type))
 	record.Set("tags", req.Tags)
 	record.Set("position", float64(time.Now().UnixMilli()))
 	record.Set("createdBy", e.Auth.Id)
@@ -296,11 +301,14 @@ func (s *AgilerrService) handleUnitUpdate(e *core.RequestEvent) error {
 	req.Status = firstNonEmpty(strings.TrimSpace(req.Status), unitRecord.GetString("status"))
 	req.Title = firstNonEmpty(strings.TrimSpace(req.Title), unitRecord.GetString("title"))
 	req.Description = strings.TrimSpace(req.Description)
-	req.Color = firstNonEmpty(strings.TrimSpace(req.Color), unitRecord.GetString("color"), defaultUnitColor)
 	req.Tags = normalizeTags(req.Tags)
 
 	if err := validateUnitPayload(req); err != nil {
 		return badRequest(e, err.Error(), err)
+	}
+	projectRecord, err := findProject(s.app, req.ProjectID)
+	if err != nil {
+		return notFound(e, "project not found")
 	}
 
 	parent, err := fetchParent(s.app, req.ParentID)
@@ -320,7 +328,7 @@ func (s *AgilerrService) handleUnitUpdate(e *core.RequestEvent) error {
 	unitRecord.Set("status", req.Status)
 	unitRecord.Set("title", req.Title)
 	unitRecord.Set("description", req.Description)
-	unitRecord.Set("color", req.Color)
+	unitRecord.Set("color", projectColorForType(projectRecord, req.Type))
 	unitRecord.Set("tags", req.Tags)
 
 	if err := s.app.Save(unitRecord); err != nil {
@@ -602,6 +610,20 @@ func (s *AgilerrService) runSmartAdd(req SmartAddRequest) (SmartAddResponse, err
 		return SmartAddResponse{}, fmt.Errorf("smart add returned invalid JSON: %w", err)
 	}
 	return result, nil
+}
+
+func (s *AgilerrService) syncProjectItemColors(projectRecord *core.Record) error {
+	unitRecords, err := loadProjectRecords(s.app, projectRecord.Id)
+	if err != nil {
+		return err
+	}
+	for _, record := range unitRecords {
+		record.Set("color", projectColorForType(projectRecord, record.GetString("type")))
+		if err := s.app.SaveNoValidate(record); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func gravatarURL(email string) string {

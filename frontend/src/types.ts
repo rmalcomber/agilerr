@@ -1,5 +1,6 @@
 export type UnitType = 'epic' | 'feature' | 'story' | 'task'
 export type UnitStatus = 'todo' | 'in_progress' | 'review' | 'done'
+export type UnitColors = Record<UnitType, string>
 
 export interface User {
   id: string
@@ -14,6 +15,7 @@ export interface Project {
   description: string
   color: string
   tags: string[]
+  unitColors: UnitColors
   created: string
   updated: string
 }
@@ -69,4 +71,4 @@ export interface SmartAddMessage {
   content: string
 }
 
-export type ProjectPage = 'backlog' | 'kanban' | 'api'
+export type ProjectPage = 'backlog' | 'kanban' | 'api' | 'settings'

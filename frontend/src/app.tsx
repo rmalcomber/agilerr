@@ -11,6 +11,7 @@ import {
   LogOut,
   Pencil,
   Plus,
+  Settings2,
   SquarePen,
   X,
 } from 'lucide-preact'
@@ -25,9 +26,9 @@ import type {
   Project,
   ProjectPage,
   ProjectTree,
-  SmartAddMessage,
   Suggestions,
   Unit,
+  UnitColors,
   UnitStatus,
   UnitType,
   User,
@@ -63,7 +64,7 @@ const nextChildType: Record<UnitType, UnitType | null> = {
 
 const presetColors = ['#c2410c', '#2563eb', '#0f766e', '#7c3aed', '#e11d48']
 
-const defaultColors: Record<UnitType, string> = {
+const defaultUnitColors: UnitColors = {
   epic: presetColors[0],
   feature: presetColors[1],
   story: presetColors[2],
@@ -78,7 +79,6 @@ type UnitDraft = {
   status: UnitStatus
   title: string
   description: string
-  color: string
   tags: string[]
 }
 
@@ -106,6 +106,7 @@ const emptyProjectDraft = {
   description: '',
   color: presetColors[1],
   tags: [] as string[],
+  unitColors: { ...defaultUnitColors } as UnitColors,
 }
 
 export default function App() {
@@ -119,18 +120,12 @@ export default function App() {
   const [authForm, setAuthForm] = useState({ email: '', password: '', name: '' })
   const [projectModalOpen, setProjectModalOpen] = useState(false)
   const [projectDraft, setProjectDraft] = useState(emptyProjectDraft)
-  const [projectEditorOpen, setProjectEditorOpen] = useState(false)
   const [projectEditor, setProjectEditor] = useState(emptyProjectDraft)
   const [unitEditor, setUnitEditor] = useState<UnitDraft | null>(null)
   const [detailUnitId, setDetailUnitId] = useState<string | null>(null)
   const [commentBody, setCommentBody] = useState('')
   const [commentMentions, setCommentMentions] = useState<Mention[]>([])
   const [suggestions, setSuggestions] = useState<Suggestions>({ units: [], users: [], tags: [] })
-  const [smartAddOpen, setSmartAddOpen] = useState(false)
-  const [smartAddMessages, setSmartAddMessages] = useState<SmartAddMessage[]>([])
-  const [smartAddInput, setSmartAddInput] = useState('')
-  const [smartAddLoading, setSmartAddLoading] = useState(false)
-  const [smartAddSuggestion, setSmartAddSuggestion] = useState<{ title: string; description: string } | null>(null)
 
   useEffect(() => {
     void loadSession()
@@ -235,6 +230,7 @@ export default function App() {
         description: result.project.description,
         color: result.project.color,
         tags: [...result.project.tags],
+        unitColors: { ...result.project.unitColors },
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load project')
@@ -302,7 +298,6 @@ export default function App() {
     try {
       const response = await api.updateProject(selectedProjectId, projectEditor)
       setProjects((current) => current.map((project) => (project.id === response.project.id ? response.project : project)))
-      setProjectEditorOpen(false)
       await loadProject(selectedProjectId)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update project')
@@ -383,10 +378,8 @@ export default function App() {
       status: 'todo',
       title: '',
       description: '',
-      color: defaultColors[type],
       tags: [],
     })
-    resetSmartAdd()
   }
 
   function openEditUnit(unit: Unit) {
@@ -398,10 +391,8 @@ export default function App() {
       status: unit.status,
       title: unit.title,
       description: unit.description,
-      color: unit.color,
       tags: [...unit.tags],
     })
-    resetSmartAdd()
   }
 
   function openUnitDetails(unit: Unit) {
@@ -422,44 +413,6 @@ export default function App() {
       return
     }
     navigate(buildUnitPath(unit.projectId, unitById, unit.id))
-  }
-
-  function resetSmartAdd() {
-    setSmartAddOpen(false)
-    setSmartAddMessages([])
-    setSmartAddInput('')
-    setSmartAddSuggestion(null)
-  }
-
-  async function runSmartAdd() {
-    if (!unitEditor) return
-    setSmartAddLoading(true)
-    setError('')
-    try {
-      const nextMessages = smartAddInput.trim()
-        ? [...smartAddMessages, { role: 'user' as const, content: smartAddInput.trim() }]
-        : [...smartAddMessages]
-
-      const result = await api.smartAdd({
-        unitType: unitEditor.type,
-        title: unitEditor.title,
-        description: unitEditor.description,
-        messages: nextMessages,
-      })
-
-      setSmartAddMessages([...nextMessages, { role: 'assistant', content: result.assistantMessage }])
-      setSmartAddInput('')
-      if (result.ready) {
-        setSmartAddSuggestion({
-          title: result.suggestedTitle,
-          description: result.suggestedDescription,
-        })
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Smart Add failed')
-    } finally {
-      setSmartAddLoading(false)
-    }
   }
 
   function insertMention(target: 'description' | 'comment', mention: Mention) {
@@ -612,6 +565,12 @@ export default function App() {
                   API
                 </button>
               </li>
+              <li>
+                <button class={activePage === 'settings' ? 'active' : ''} disabled={!selectedProjectId} onClick={() => selectedProjectId && navigate(projectSettingsPath(selectedProjectId))}>
+                  <Settings2 size={16} />
+                  Settings
+                </button>
+              </li>
             </ul>
           </nav>
 
@@ -647,7 +606,7 @@ export default function App() {
             <>
               {route.view === 'backlog' && (
                 <>
-                  <ProjectHero project={tree.project} tags={tree.tags} onEdit={() => setProjectEditorOpen(true)} onAddEpic={() => openNewUnit(tree.project.id)} />
+                  <ProjectHero project={tree.project} tags={tree.tags} onEdit={() => navigate(projectSettingsPath(tree.project.id))} onAddEpic={() => openNewUnit(tree.project.id)} />
                   <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-4 shadow-panel">
                     <div class="mb-4 flex items-center justify-between">
                       <h2 class="text-lg font-bold">Backlog</h2>
@@ -674,9 +633,18 @@ export default function App() {
 
               {route.view === 'api' && (
                 <>
-                  <ProjectHero project={tree.project} tags={tree.tags} onEdit={() => setProjectEditorOpen(true)} onAddEpic={() => openNewUnit(tree.project.id)} />
+                  <ProjectHero project={tree.project} tags={tree.tags} onEdit={() => navigate(projectSettingsPath(tree.project.id))} onAddEpic={() => openNewUnit(tree.project.id)} />
                   <ApiDocsPage projectId={tree.project.id} />
                 </>
+              )}
+
+              {route.view === 'settings' && (
+                <ProjectSettingsPage
+                  draft={projectEditor}
+                  suggestions={tree.tags}
+                  onChange={setProjectEditor}
+                  onSave={(event) => void handleUpdateProject(event)}
+                />
               )}
 
               {route.view === 'kanban' && (
@@ -699,7 +667,7 @@ export default function App() {
                       commentsByUnit={commentsByUnit}
                       userById={userById}
                       unitById={unitById}
-                      onEditProject={() => setProjectEditorOpen(true)}
+                      onEditProject={() => navigate(projectSettingsPath(tree.project.id))}
                       onAddEpic={() => openNewUnit(tree.project.id)}
                       onOpenRoute={openUnitRoute}
                       onOpenDetails={openUnitDetails}
@@ -742,32 +710,6 @@ export default function App() {
               <button class="btn btn-primary" type="submit">
                 <Plus size={16} />
                 Create project
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
-
-      {projectEditorOpen && (
-        <Modal title="Edit Project" onClose={() => setProjectEditorOpen(false)}>
-          <form class="space-y-4" onSubmit={handleUpdateProject}>
-            <Field label="Name">
-              <input class="input input-bordered w-full" required value={projectEditor.name} onInput={(e) => setProjectEditor({ ...projectEditor, name: (e.currentTarget as HTMLInputElement).value })} />
-            </Field>
-            <Field label="Description">
-              <textarea class="textarea textarea-bordered min-h-36 w-full" value={projectEditor.description} onInput={(e) => setProjectEditor({ ...projectEditor, description: (e.currentTarget as HTMLTextAreaElement).value })} />
-            </Field>
-            <Field label="Color">
-              <ColorPicker value={projectEditor.color} onChange={(color) => setProjectEditor({ ...projectEditor, color })} />
-            </Field>
-            <TagEditor tags={projectEditor.tags} suggestions={tree?.tags || []} onChange={(tags) => setProjectEditor({ ...projectEditor, tags })} />
-            <div class="flex justify-end gap-2">
-              <button class="btn btn-ghost" type="button" onClick={() => setProjectEditorOpen(false)}>
-                Cancel
-              </button>
-              <button class="btn btn-primary" type="submit">
-                <SquarePen size={16} />
-                Save project
               </button>
             </div>
           </form>
@@ -825,57 +767,7 @@ export default function App() {
                       ))}
                   </select>
                 </Field>
-                <Field label="Color">
-                  <ColorPicker value={unitEditor.color} onChange={(color) => setUnitEditor({ ...unitEditor, color })} />
-                </Field>
                 <TagEditor tags={unitEditor.tags} suggestions={tree?.tags || []} onChange={(tags) => setUnitEditor({ ...unitEditor, tags })} />
-
-                <div class="rounded-2xl border border-base-300 bg-base-200/60 p-4">
-                  <div class="mb-3 flex items-center justify-between">
-                    <h3 class="font-semibold">Smart Add</h3>
-                    <button class="btn btn-outline btn-sm" type="button" onClick={() => setSmartAddOpen((current) => !current)}>
-                      {smartAddOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      {smartAddOpen ? 'Hide' : 'Open'}
-                    </button>
-                  </div>
-
-                  {smartAddOpen && (
-                    <div class="space-y-3">
-                      <div class="max-h-60 space-y-2 overflow-auto rounded-2xl bg-base-100 p-3">
-                        {smartAddMessages.map((message, index) => (
-                          <div class={`chat ${message.role === 'user' ? 'chat-end' : 'chat-start'}`} key={`${message.role}-${index}`}>
-                            <div class={`chat-bubble ${message.role === 'user' ? 'chat-bubble-primary' : ''}`}>{message.content}</div>
-                          </div>
-                        ))}
-                        {!smartAddMessages.length && <p class="text-sm text-base-content/85">Ask the assistant to tighten the item or call out missing detail.</p>}
-                      </div>
-                      <textarea class="textarea textarea-bordered min-h-24 w-full" placeholder="What should be improved or clarified?" value={smartAddInput} onInput={(e) => setSmartAddInput((e.currentTarget as HTMLTextAreaElement).value)} />
-                      <div class="flex flex-wrap items-center justify-between gap-2">
-                        {smartAddSuggestion ? (
-                          <button
-                            class="btn btn-secondary btn-sm"
-                            type="button"
-                            onClick={() => {
-                              setUnitEditor({
-                                ...unitEditor,
-                                title: smartAddSuggestion.title,
-                                description: smartAddSuggestion.description,
-                              })
-                              setSmartAddOpen(false)
-                            }}
-                          >
-                            Apply suggestion
-                          </button>
-                        ) : (
-                          <span class="text-sm text-base-content/85">Configured with `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`.</span>
-                        )}
-                        <button class="btn btn-primary btn-sm" disabled={smartAddLoading} type="button" onClick={() => void runSmartAdd()}>
-                          {smartAddLoading ? 'Thinking...' : 'Send to Smart Add'}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
               </section>
             </div>
 
@@ -992,6 +884,68 @@ function ProjectHero(props: { project: Project; tags: string[]; onEdit: () => vo
         </div>
       </div>
     </header>
+  )
+}
+
+function ProjectSettingsPage(props: {
+  draft: typeof emptyProjectDraft
+  suggestions: string[]
+  onChange: (draft: typeof emptyProjectDraft) => void
+  onSave: (event: Event) => void
+}) {
+  return (
+    <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+      <div class="mb-5">
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">Settings</p>
+        <h2 class="mt-2 text-2xl font-black">Project settings</h2>
+        <p class="mt-2 text-sm text-base-content/85">Set the project metadata and the default colors used for each item type.</p>
+      </div>
+
+      <form class="space-y-5" onSubmit={props.onSave}>
+        <div class="grid gap-5 lg:grid-cols-[1fr,0.95fr]">
+          <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
+            <h3 class="text-lg font-bold">Project</h3>
+            <Field label="Name">
+              <input class="input input-bordered w-full" required value={props.draft.name} onInput={(e) => props.onChange({ ...props.draft, name: (e.currentTarget as HTMLInputElement).value })} />
+            </Field>
+            <Field label="Description">
+              <textarea class="textarea textarea-bordered min-h-36 w-full" value={props.draft.description} onInput={(e) => props.onChange({ ...props.draft, description: (e.currentTarget as HTMLTextAreaElement).value })} />
+            </Field>
+            <Field label="Project color">
+              <ColorPicker value={props.draft.color} onChange={(color) => props.onChange({ ...props.draft, color })} />
+            </Field>
+            <TagEditor tags={props.draft.tags} suggestions={props.suggestions} onChange={(tags) => props.onChange({ ...props.draft, tags })} />
+          </section>
+
+          <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
+            <h3 class="text-lg font-bold">Item colors</h3>
+            {(['epic', 'feature', 'story', 'task'] as UnitType[]).map((type) => (
+              <Field label={typeLabels[type]} key={type}>
+                <ColorPicker
+                  value={props.draft.unitColors[type]}
+                  onChange={(color) =>
+                    props.onChange({
+                      ...props.draft,
+                      unitColors: {
+                        ...props.draft.unitColors,
+                        [type]: color,
+                      },
+                    })
+                  }
+                />
+              </Field>
+            ))}
+          </section>
+        </div>
+
+        <div class="flex justify-end">
+          <button class="btn btn-primary" type="submit">
+            <SquarePen size={16} />
+            Save project settings
+          </button>
+        </div>
+      </form>
+    </section>
   )
 }
 
@@ -1565,6 +1519,7 @@ function parseRoute(pathname: string): AppRoute {
   if (segments.length === 2) return { kind: 'project', projectId, view: 'kanban', chain: [] }
   if (segments[2] === 'backlog' && segments.length === 3) return { kind: 'project', projectId, view: 'backlog', chain: [] }
   if (segments[2] === 'api' && segments.length === 3) return { kind: 'project', projectId, view: 'api', chain: [] }
+  if (segments[2] === 'settings' && segments.length === 3) return { kind: 'project', projectId, view: 'settings', chain: [] }
 
   const expected = ['epics', 'features', 'stories', 'tasks']
   const chain: string[] = []
@@ -1635,9 +1590,14 @@ function projectApiPath(projectId: string) {
   return `/projects/${projectId}/api`
 }
 
+function projectSettingsPath(projectId: string) {
+  return `/projects/${projectId}/settings`
+}
+
 function projectPathForSelection(projectId: string, page: ProjectPage | null) {
   if (page === 'backlog') return projectBacklogPath(projectId)
   if (page === 'api') return projectApiPath(projectId)
+  if (page === 'settings') return projectSettingsPath(projectId)
   return projectKanbanPath(projectId)
 }
 

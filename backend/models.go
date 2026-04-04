@@ -24,8 +24,15 @@ var (
 	unitStatuses     = []string{"todo", "in_progress", "review", "done"}
 	allowedChildType = map[string]string{"epic": "feature", "feature": "story", "story": "task"}
 	defaultProjectColor = "#2563eb"
-	defaultUnitColor    = "#14b8a6"
+	defaultUnitColors   = map[string]string{
+		"epic":    "#c2410c",
+		"feature": "#2563eb",
+		"story":   "#0f766e",
+		"task":    "#7c3aed",
+	}
 )
+
+type UnitColorSettings map[string]string
 
 type ProjectDTO struct {
 	ID          string    `json:"id"`
@@ -33,6 +40,7 @@ type ProjectDTO struct {
 	Description string    `json:"description"`
 	Color       string    `json:"color"`
 	Tags        []string  `json:"tags"`
+	UnitColors  UnitColorSettings `json:"unitColors"`
 	Created     time.Time `json:"created"`
 	Updated     time.Time `json:"updated"`
 }
@@ -89,6 +97,7 @@ type CreateProjectRequest struct {
 	Description string   `json:"description"`
 	Color       string   `json:"color"`
 	Tags        []string `json:"tags"`
+	UnitColors  UnitColorSettings `json:"unitColors"`
 }
 
 type SaveUnitRequest struct {
@@ -197,6 +206,7 @@ func recordToProject(record *core.Record) ProjectDTO {
 		Description: record.GetString("description"),
 		Color:       record.GetString("color"),
 		Tags:        decodeStringSlice(record, "tags"),
+		UnitColors:  decodeUnitColors(record, "unitColors"),
 		Created:     record.GetDateTime("created").Time(),
 		Updated:     record.GetDateTime("updated").Time(),
 	}
@@ -268,6 +278,34 @@ func decodeMentions(record *core.Record, field string) []Mention {
 	var parsed []Mention
 	_ = record.UnmarshalJSONField(field, &parsed)
 	return normalizeMentions(parsed)
+}
+
+func normalizeUnitColors(colors map[string]string) UnitColorSettings {
+	out := make(UnitColorSettings, len(defaultUnitColors))
+	for unitType, fallback := range defaultUnitColors {
+		out[unitType] = fallback
+	}
+	for unitType, color := range colors {
+		unitType = strings.ToLower(strings.TrimSpace(unitType))
+		color = strings.TrimSpace(color)
+		if contains(unitTypes, unitType) && color != "" {
+			out[unitType] = color
+		}
+	}
+	return out
+}
+
+func decodeUnitColors(record *core.Record, field string) UnitColorSettings {
+	var parsed map[string]string
+	_ = record.UnmarshalJSONField(field, &parsed)
+	return normalizeUnitColors(parsed)
+}
+
+func projectColorForType(project *core.Record, unitType string) string {
+	if project == nil {
+		return defaultUnitColors[unitType]
+	}
+	return normalizeUnitColors(decodeUnitColors(project, "unitColors"))[unitType]
 }
 
 func uniqueTags(project ProjectDTO, units []UnitDTO) []string {
