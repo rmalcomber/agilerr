@@ -1,6 +1,7 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useMemo, useState } from 'preact/hooks'
 import {
+  ArrowRight,
   BookOpen,
   ChevronDown,
   ChevronRight,
@@ -327,7 +328,7 @@ export default function App() {
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save unit')
+      setError(err instanceof Error ? err.message : 'Failed to save item')
     }
   }
 
@@ -336,12 +337,12 @@ export default function App() {
       await api.moveUnit(unitId, status)
       if (selectedProjectId) await loadProject(selectedProjectId)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to move unit')
+      setError(err instanceof Error ? err.message : 'Failed to move item')
     }
   }
 
   async function deleteUnit(unitId: string) {
-    if (!window.confirm('Delete this unit? Child units must already be removed.')) return
+    if (!window.confirm('Delete this item? Child items must already be removed.')) return
     try {
       const unit = unitById[unitId]
       await api.deleteUnit(unitId)
@@ -353,7 +354,7 @@ export default function App() {
       }
       if (selectedProjectId) await loadProject(selectedProjectId)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete unit')
+      setError(err instanceof Error ? err.message : 'Failed to delete item')
     }
   }
 
@@ -526,6 +527,7 @@ export default function App() {
               {error && <div class="alert alert-error py-2 text-sm">{error}</div>}
 
               <button class="btn btn-primary" type="submit">
+                <ArrowRight size={16} />
                 {authMode === 'login' ? 'Sign in' : 'Create account'}
               </button>
 
@@ -575,7 +577,10 @@ export default function App() {
                   </li>
                 ))}
                 <li class="mt-1 border-t border-base-300 pt-1">
-                  <button onClick={() => setProjectModalOpen(true)}>Create new project</button>
+                  <button onClick={() => setProjectModalOpen(true)}>
+                    <Plus size={16} />
+                    Create new project
+                  </button>
                 </li>
               </ul>
             </details>
@@ -646,7 +651,7 @@ export default function App() {
                   <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-4 shadow-panel">
                     <div class="mb-4 flex items-center justify-between">
                       <h2 class="text-lg font-bold">Backlog</h2>
-                      <span class="text-xs text-base-content/75">{units.length} units</span>
+                      <span class="text-xs text-base-content/75">{units.length} items</span>
                     </div>
                     <div class="space-y-3">
                       {(treeByParent.get('root') || []).map((unit) => (
@@ -661,7 +666,7 @@ export default function App() {
                           onCreateChild={(target) => openNewUnit(tree.project.id, target)}
                         />
                       ))}
-                      {!units.length && <div class="rounded-xl border border-dashed border-base-300 p-3 text-xs text-base-content/80">No units yet. Start with an Epic.</div>}
+                      {!units.length && <div class="rounded-xl border border-dashed border-base-300 p-3 text-xs text-base-content/80">No items yet. Start with an Epic.</div>}
                     </div>
                   </section>
                 </>
@@ -678,7 +683,7 @@ export default function App() {
                 <>
                   {projectRouteInvalid ? (
                     <div class="rounded-[1.5rem] border border-warning/30 bg-base-100/90 p-6 shadow-panel">
-                      <h2 class="text-lg font-bold">Unit path not found</h2>
+                      <h2 class="text-lg font-bold">Item path not found</h2>
                       <p class="mt-2 text-sm text-base-content/85">This link does not match the current project hierarchy.</p>
                       <button class="btn btn-primary btn-sm mt-4" onClick={() => navigate(projectKanbanPath(tree.project.id), true)}>
                         <FolderKanban size={16} />
@@ -770,7 +775,7 @@ export default function App() {
       )}
 
       {unitEditor && (
-        <Modal title={unitEditor.id ? 'Edit Unit' : `Add ${typeLabels[unitEditor.type]}`} onClose={() => setUnitEditor(null)} wide>
+        <Modal title={unitEditor.id ? `Edit ${typeLabels[unitEditor.type]}` : `Add ${typeLabels[unitEditor.type]}`} onClose={() => setUnitEditor(null)} wide>
           <form class="space-y-5" onSubmit={saveUnit}>
             <div class="grid gap-6 lg:grid-cols-[1fr,0.9fr]">
               <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
@@ -795,7 +800,7 @@ export default function App() {
                 </Field>
                 <div class="grid gap-4 lg:grid-cols-2">
                   <MentionPanel title="Mention users" items={suggestions.users.map((item) => ({ id: item.id, label: item.label, type: 'user' as const }))} onPick={(mention) => insertMention('description', mention)} />
-                  <MentionPanel title="Mention units" items={suggestions.units.map((item) => ({ id: item.id, label: item.label, type: 'unit' as const }))} onPick={(mention) => insertMention('description', mention)} />
+                  <MentionPanel title="Mention items" items={suggestions.units.map((item) => ({ id: item.id, label: item.label, type: 'unit' as const }))} onPick={(mention) => insertMention('description', mention)} />
                 </div>
               </section>
 
@@ -878,7 +883,7 @@ export default function App() {
               {unitEditor.id ? (
                 <button class="btn btn-error btn-outline" type="button" onClick={() => void deleteUnit(unitEditor.id!)}>
                   <X size={16} />
-                  Delete unit
+                  Delete item
                 </button>
               ) : (
                 <span />
@@ -889,7 +894,7 @@ export default function App() {
                 </button>
                 <button class="btn btn-primary" type="submit">
                   <SquarePen size={16} />
-                  Save unit
+                  Save item
                 </button>
               </div>
             </div>
@@ -1204,7 +1209,7 @@ function UnitDetailContent(props: {
           {props.onEdit && (
             <button class="btn btn-primary btn-sm" onClick={props.onEdit}>
               <Pencil size={16} />
-              Edit unit
+              Edit item
             </button>
           )}
           {props.onCreateChild && (
@@ -1267,7 +1272,7 @@ function UnitCommentsSection(props: {
         </Field>
         <div class="grid gap-4 lg:grid-cols-2">
           <MentionPanel title="Mention users" items={props.suggestions.users.map((item) => ({ id: item.id, label: item.label, type: 'user' as const }))} onPick={props.onInsertCommentMention} />
-          <MentionPanel title="Mention units" items={props.suggestions.units.map((item) => ({ id: item.id, label: item.label, type: 'unit' as const }))} onPick={props.onInsertCommentMention} />
+          <MentionPanel title="Mention items" items={props.suggestions.units.map((item) => ({ id: item.id, label: item.label, type: 'unit' as const }))} onPick={props.onInsertCommentMention} />
         </div>
         <button class="btn btn-primary" type="submit">
           Save comment
@@ -1469,7 +1474,7 @@ function UnitTreeNode(props: {
           <div class="mt-1.5 text-xs text-base-content/90">{plainText(props.unit.description) || 'No description yet.'}</div>
         </div>
         <div class="flex gap-2">
-          <button class="btn btn-outline btn-xs" onClick={() => props.onEdit(props.unit)} title="Edit unit" aria-label="Edit unit">
+          <button class="btn btn-outline btn-xs" onClick={() => props.onEdit(props.unit)} title="Edit item" aria-label="Edit item">
             <Pencil size={14} />
           </button>
           {nextChildType[props.unit.type] && (
@@ -1508,15 +1513,15 @@ function ApiDocsPage(props: { projectId: string }) {
         <ApiEndpoint method="GET" path={`${base}/projects`} description="List projects visible to the authenticated user." />
         <ApiEndpoint method="POST" path={`${base}/projects`} description="Create a project with `name`, `description`, `color`, and `tags`." />
         <ApiEndpoint method="PATCH" path={`${base}/projects/${props.projectId}`} description="Update the active project's metadata." />
-        <ApiEndpoint method="GET" path={`${base}/projects/${props.projectId}`} description="Fetch the project, units, comments, users, and tag suggestions in a single response." />
-        <ApiEndpoint method="GET" path={`${base}/projects/${props.projectId}/suggest?q=term`} description="Return tag, user, and unit suggestions for mentions and tagging." />
-        <ApiEndpoint method="POST" path={`${base}/projects/${props.projectId}/units`} description="Create a new unit under the project." />
-        <ApiEndpoint method="PATCH" path={`${base}/units/{unitId}`} description="Edit an existing unit." />
-        <ApiEndpoint method="POST" path={`${base}/units/{unitId}/move`} description="Move a unit between kanban lanes using `{ status }`." />
-        <ApiEndpoint method="DELETE" path={`${base}/units/{unitId}`} description="Delete a unit after its child units are removed." />
-        <ApiEndpoint method="GET" path={`${base}/units/{unitId}/comments`} description="List comments for a unit." />
+        <ApiEndpoint method="GET" path={`${base}/projects/${props.projectId}`} description="Fetch the project, items, comments, users, and tag suggestions in a single response." />
+        <ApiEndpoint method="GET" path={`${base}/projects/${props.projectId}/suggest?q=term`} description="Return tag, user, and item suggestions for mentions and tagging." />
+        <ApiEndpoint method="POST" path={`${base}/projects/${props.projectId}/units`} description="Create a new item under the project." />
+        <ApiEndpoint method="PATCH" path={`${base}/units/{unitId}`} description="Edit an existing item." />
+        <ApiEndpoint method="POST" path={`${base}/units/{unitId}/move`} description="Move an item between kanban lanes using `{ status }`." />
+        <ApiEndpoint method="DELETE" path={`${base}/units/{unitId}`} description="Delete an item after its child items are removed." />
+        <ApiEndpoint method="GET" path={`${base}/units/{unitId}/comments`} description="List comments for an item." />
         <ApiEndpoint method="POST" path={`${base}/units/{unitId}/comments`} description="Create a markdown comment with optional mentions." />
-        <ApiEndpoint method="POST" path={`${base}/smart-add`} description="Refine a draft unit using the configured OpenAI endpoint." />
+        <ApiEndpoint method="POST" path={`${base}/smart-add`} description="Refine a draft item using the configured OpenAI endpoint." />
       </div>
 
       <div class="mt-6 rounded-xl border border-base-300 bg-base-200/60 p-4">
