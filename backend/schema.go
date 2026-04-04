@@ -1,0 +1,148 @@
+package main
+
+import (
+	"errors"
+
+	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/types"
+)
+
+func (s *AgilerrService) EnsureSchema() error {
+	users, err := s.ensureUsersCollection()
+	if err != nil {
+		return err
+	}
+	if err := s.app.ReloadCachedCollections(); err != nil {
+		return err
+	}
+
+	projects, err := s.ensureProjectsCollection()
+	if err != nil {
+		return err
+	}
+	if err := s.app.ReloadCachedCollections(); err != nil {
+		return err
+	}
+
+	units, err := s.ensureUnitsCollection(projects.Id, users.Id)
+	if err != nil {
+		return err
+	}
+	if err := s.app.ReloadCachedCollections(); err != nil {
+		return err
+	}
+
+	_, err = s.ensureCommentsCollection(units.Id, users.Id)
+	if err != nil {
+		return err
+	}
+	return s.app.ReloadCachedCollections()
+}
+
+func (s *AgilerrService) ensureUsersCollection() (*core.Collection, error) {
+	col, err := s.app.FindCollectionByNameOrId(collectionUsers)
+	if err != nil {
+		col = core.NewAuthCollection(collectionUsers)
+	}
+
+	public := types.Pointer("")
+	self := types.Pointer("@request.auth.id = id")
+
+	col.CreateRule = public
+	col.ViewRule = self
+	col.UpdateRule = self
+	col.DeleteRule = nil
+	col.ListRule = nil
+	col.Fields.Add(
+		&core.TextField{Name: "name", Required: true, Min: 1, Max: 120},
+	)
+
+	return col, s.app.Save(col)
+}
+
+func (s *AgilerrService) ensureProjectsCollection() (*core.Collection, error) {
+	col, err := s.app.FindCollectionByNameOrId(collectionProjects)
+	if err != nil {
+		col = core.NewBaseCollection(collectionProjects)
+	} else if col.Type != core.CollectionTypeBase {
+		return nil, errors.New("projects collection exists with an incompatible type")
+	}
+
+	authenticated := types.Pointer("@request.auth.id != ''")
+
+	col.ListRule = authenticated
+	col.ViewRule = authenticated
+	col.CreateRule = authenticated
+	col.UpdateRule = authenticated
+	col.DeleteRule = authenticated
+	col.Fields.Add(
+		&core.TextField{Name: "name", Required: true, Min: 1, Max: 160},
+		&core.TextField{Name: "description", Max: 12000},
+		&core.TextField{Name: "color", Required: true, Min: 4, Max: 24},
+		&core.JSONField{Name: "tags"},
+	)
+
+	return col, s.app.Save(col)
+}
+
+func (s *AgilerrService) ensureUnitsCollection(_ string, _ string) (*core.Collection, error) {
+	col, err := s.app.FindCollectionByNameOrId(collectionUnits)
+	if err != nil {
+		col = core.NewBaseCollection(collectionUnits)
+	} else if col.Type != core.CollectionTypeBase {
+		return nil, errors.New("units collection exists with an incompatible type")
+	}
+
+	if col.Id == "" {
+		if err := s.app.Save(col); err != nil {
+			return nil, err
+		}
+	}
+
+	authenticated := types.Pointer("@request.auth.id != ''")
+
+	col.ListRule = authenticated
+	col.ViewRule = authenticated
+	col.CreateRule = authenticated
+	col.UpdateRule = authenticated
+	col.DeleteRule = authenticated
+	col.Fields.Add(
+		&core.TextField{Name: "project", Required: true, Min: 1, Max: 32},
+		&core.TextField{Name: "parent", Max: 32},
+		&core.SelectField{Name: "type", Required: true, Values: unitTypes},
+		&core.SelectField{Name: "status", Required: true, Values: unitStatuses},
+		&core.TextField{Name: "title", Required: true, Min: 1, Max: 200},
+		&core.TextField{Name: "description", Max: 12000},
+		&core.TextField{Name: "color", Required: true, Min: 4, Max: 24},
+		&core.JSONField{Name: "tags"},
+		&core.NumberField{Name: "position"},
+		&core.TextField{Name: "createdBy", Max: 32},
+	)
+
+	return col, s.app.Save(col)
+}
+
+func (s *AgilerrService) ensureCommentsCollection(_ string, _ string) (*core.Collection, error) {
+	col, err := s.app.FindCollectionByNameOrId(collectionComments)
+	if err != nil {
+		col = core.NewBaseCollection(collectionComments)
+	} else if col.Type != core.CollectionTypeBase {
+		return nil, errors.New("comments collection exists with an incompatible type")
+	}
+
+	authenticated := types.Pointer("@request.auth.id != ''")
+
+	col.ListRule = authenticated
+	col.ViewRule = authenticated
+	col.CreateRule = authenticated
+	col.UpdateRule = authenticated
+	col.DeleteRule = authenticated
+	col.Fields.Add(
+		&core.TextField{Name: "unit", Required: true, Min: 1, Max: 32},
+		&core.TextField{Name: "author", Required: true, Min: 1, Max: 32},
+		&core.TextField{Name: "body", Required: true, Min: 1, Max: 20000},
+		&core.JSONField{Name: "mentions"},
+	)
+
+	return col, s.app.Save(col)
+}
