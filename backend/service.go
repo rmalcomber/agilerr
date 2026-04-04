@@ -124,6 +124,7 @@ func (s *AgilerrService) handleProjectCreate(e *core.RequestEvent) error {
 	record.Set("color", firstNonEmpty(strings.TrimSpace(req.Color), defaultProjectColor))
 	record.Set("tags", normalizeTags(req.Tags))
 	record.Set("unitColors", normalizeUnitColors(req.UnitColors))
+	record.Set("statusColors", normalizeStatusColors(req.StatusColors))
 
 	if err := s.app.Save(record); err != nil {
 		return badRequest(e, "failed to save project", err)
@@ -154,6 +155,7 @@ func (s *AgilerrService) handleProjectUpdate(e *core.RequestEvent) error {
 	projectRecord.Set("color", firstNonEmpty(strings.TrimSpace(req.Color), projectRecord.GetString("color"), defaultProjectColor))
 	projectRecord.Set("tags", normalizeTags(req.Tags))
 	projectRecord.Set("unitColors", normalizeUnitColors(req.UnitColors))
+	projectRecord.Set("statusColors", normalizeStatusColors(req.StatusColors))
 
 	if err := s.app.Save(projectRecord); err != nil {
 		return badRequest(e, "failed to update project", err)
@@ -551,11 +553,11 @@ func (s *AgilerrService) runSmartAdd(req SmartAddRequest) (SmartAddResponse, err
 		Temperature: 0.3,
 		Messages: []chatMessage{
 			{
-				Role: "system",
+				Role:    "system",
 				Content: "You help shape Agile backlog items. Reply with JSON only using keys: ready, assistantMessage, suggestedTitle, suggestedDescription. Ask concise clarification questions until the item is actionable. When enough context exists, set ready=true and return polished markdown-friendly title and description.",
 			},
 			{
-				Role: "user",
+				Role:    "user",
 				Content: fmt.Sprintf("Unit type: %s\nCurrent title: %s\nCurrent description:\n%s", req.UnitType, req.Title, req.Description),
 			},
 		},

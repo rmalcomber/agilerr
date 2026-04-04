@@ -81,6 +81,7 @@ func (s *AgilerrService) ensureProjectsCollection() (*core.Collection, error) {
 		&core.TextField{Name: "color", Required: true, Min: 4, Max: 24},
 		&core.JSONField{Name: "tags"},
 		&core.JSONField{Name: "unitColors"},
+		&core.JSONField{Name: "statusColors"},
 	)
 
 	return col, s.app.Save(col)

@@ -2,6 +2,7 @@ export type UnitType = 'epic' | 'feature' | 'story' | 'task' | 'bug'
 export type UnitStatus = 'triage' | 'todo' | 'in_progress' | 'review' | 'done'
 export type BugPriority = 'critical' | 'high' | 'medium' | 'low'
 export type UnitColors = Record<UnitType, string>
+export type StatusColors = Record<UnitStatus, string>
 
 export interface User {
   id: string
@@ -17,6 +18,7 @@ export interface Project {
   color: string
   tags: string[]
   unitColors: UnitColors
+  statusColors: StatusColors
   created: string
   updated: string
 }

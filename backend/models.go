@@ -20,32 +20,41 @@ const (
 )
 
 var (
-	unitTypes        = []string{"epic", "feature", "story", "task", "bug"}
-	unitStatuses     = []string{"triage", "todo", "in_progress", "review", "done"}
+	unitTypes            = []string{"epic", "feature", "story", "task", "bug"}
+	unitStatuses         = []string{"triage", "todo", "in_progress", "review", "done"}
 	standardUnitStatuses = []string{"todo", "in_progress", "review", "done"}
-	bugPriorities    = []string{"critical", "high", "medium", "low"}
-	allowedChildType = map[string]string{"epic": "feature", "feature": "story", "story": "task"}
-	defaultProjectColor = "#2563eb"
-	defaultUnitColors   = map[string]string{
+	bugPriorities        = []string{"critical", "high", "medium", "low"}
+	allowedChildType     = map[string]string{"epic": "feature", "feature": "story", "story": "task"}
+	defaultProjectColor  = "#2563eb"
+	defaultUnitColors    = map[string]string{
 		"epic":    "#c2410c",
 		"feature": "#2563eb",
 		"story":   "#0f766e",
 		"task":    "#7c3aed",
 		"bug":     "#dc2626",
 	}
+	defaultStatusColors = map[string]string{
+		"triage":      "#f59e0b",
+		"todo":        "#64748b",
+		"in_progress": "#38bdf8",
+		"review":      "#a78bfa",
+		"done":        "#22c55e",
+	}
 )
 
 type UnitColorSettings map[string]string
+type StatusColorSettings map[string]string
 
 type ProjectDTO struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Color       string    `json:"color"`
-	Tags        []string  `json:"tags"`
-	UnitColors  UnitColorSettings `json:"unitColors"`
-	Created     time.Time `json:"created"`
-	Updated     time.Time `json:"updated"`
+	ID           string              `json:"id"`
+	Name         string              `json:"name"`
+	Description  string              `json:"description"`
+	Color        string              `json:"color"`
+	Tags         []string            `json:"tags"`
+	UnitColors   UnitColorSettings   `json:"unitColors"`
+	StatusColors StatusColorSettings `json:"statusColors"`
+	Created      time.Time           `json:"created"`
+	Updated      time.Time           `json:"updated"`
 }
 
 type UnitDTO struct {
@@ -66,20 +75,20 @@ type UnitDTO struct {
 }
 
 type CommentDTO struct {
-	ID        string    `json:"id"`
-	UnitID    string    `json:"unitId"`
-	AuthorID  string    `json:"authorId"`
-	Body      string    `json:"body"`
-	Mentions  []Mention `json:"mentions"`
-	Created   time.Time `json:"created"`
-	Updated   time.Time `json:"updated"`
+	ID       string    `json:"id"`
+	UnitID   string    `json:"unitId"`
+	AuthorID string    `json:"authorId"`
+	Body     string    `json:"body"`
+	Mentions []Mention `json:"mentions"`
+	Created  time.Time `json:"created"`
+	Updated  time.Time `json:"updated"`
 }
 
 type UserDTO struct {
-	ID        string `json:"id"`
-	Email     string `json:"email"`
-	Name      string `json:"name"`
-	Gravatar  string `json:"gravatar"`
+	ID       string `json:"id"`
+	Email    string `json:"email"`
+	Name     string `json:"name"`
+	Gravatar string `json:"gravatar"`
 }
 
 type Mention struct {
@@ -97,11 +106,12 @@ type ProjectTreeResponse struct {
 }
 
 type CreateProjectRequest struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Color       string   `json:"color"`
-	Tags        []string `json:"tags"`
-	UnitColors  UnitColorSettings `json:"unitColors"`
+	Name         string              `json:"name"`
+	Description  string              `json:"description"`
+	Color        string              `json:"color"`
+	Tags         []string            `json:"tags"`
+	UnitColors   UnitColorSettings   `json:"unitColors"`
+	StatusColors StatusColorSettings `json:"statusColors"`
 }
 
 type SaveUnitRequest struct {
@@ -138,9 +148,9 @@ type SmartAddRequest struct {
 }
 
 type SmartAddResponse struct {
-	Ready               bool   `json:"ready"`
-	AssistantMessage    string `json:"assistantMessage"`
-	SuggestedTitle      string `json:"suggestedTitle"`
+	Ready                bool   `json:"ready"`
+	AssistantMessage     string `json:"assistantMessage"`
+	SuggestedTitle       string `json:"suggestedTitle"`
 	SuggestedDescription string `json:"suggestedDescription"`
 }
 
@@ -219,14 +229,15 @@ func contains(values []string, target string) bool {
 
 func recordToProject(record *core.Record) ProjectDTO {
 	return ProjectDTO{
-		ID:          record.Id,
-		Name:        record.GetString("name"),
-		Description: record.GetString("description"),
-		Color:       record.GetString("color"),
-		Tags:        decodeStringSlice(record, "tags"),
-		UnitColors:  decodeUnitColors(record, "unitColors"),
-		Created:     record.GetDateTime("created").Time(),
-		Updated:     record.GetDateTime("updated").Time(),
+		ID:           record.Id,
+		Name:         record.GetString("name"),
+		Description:  record.GetString("description"),
+		Color:        record.GetString("color"),
+		Tags:         decodeStringSlice(record, "tags"),
+		UnitColors:   decodeUnitColors(record, "unitColors"),
+		StatusColors: decodeStatusColors(record, "statusColors"),
+		Created:      record.GetDateTime("created").Time(),
+		Updated:      record.GetDateTime("updated").Time(),
 	}
 }
 
@@ -314,10 +325,31 @@ func normalizeUnitColors(colors map[string]string) UnitColorSettings {
 	return out
 }
 
+func normalizeStatusColors(colors map[string]string) StatusColorSettings {
+	out := make(StatusColorSettings, len(defaultStatusColors))
+	for status, fallback := range defaultStatusColors {
+		out[status] = fallback
+	}
+	for status, color := range colors {
+		status = strings.ToLower(strings.TrimSpace(status))
+		color = strings.TrimSpace(color)
+		if contains(unitStatuses, status) && color != "" {
+			out[status] = color
+		}
+	}
+	return out
+}
+
 func decodeUnitColors(record *core.Record, field string) UnitColorSettings {
 	var parsed map[string]string
 	_ = record.UnmarshalJSONField(field, &parsed)
 	return normalizeUnitColors(parsed)
+}
+
+func decodeStatusColors(record *core.Record, field string) StatusColorSettings {
+	var parsed map[string]string
+	_ = record.UnmarshalJSONField(field, &parsed)
+	return normalizeStatusColors(parsed)
 }
 
 func projectColorForType(project *core.Record, unitType string) string {

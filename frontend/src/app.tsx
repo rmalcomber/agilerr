@@ -31,6 +31,7 @@ import type {
   Suggestions,
   Unit,
   BugPriority,
+  StatusColors,
   UnitColors,
   UnitStatus,
   UnitType,
@@ -88,6 +89,14 @@ const defaultUnitColors: UnitColors = {
   bug: '#dc2626',
 }
 
+const defaultStatusColors: StatusColors = {
+  triage: '#f59e0b',
+  todo: '#64748b',
+  in_progress: '#38bdf8',
+  review: '#a78bfa',
+  done: '#22c55e',
+}
+
 type UnitDraft = {
   id?: string
   projectId: string
@@ -125,6 +134,7 @@ const emptyProjectDraft = {
   color: presetColors[1],
   tags: [] as string[],
   unitColors: { ...defaultUnitColors } as UnitColors,
+  statusColors: { ...defaultStatusColors } as StatusColors,
 }
 
 export default function App() {
@@ -252,6 +262,7 @@ export default function App() {
         color: result.project.color,
         tags: [...result.project.tags],
         unitColors: { ...result.project.unitColors },
+        statusColors: { ...result.project.statusColors },
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load project')
@@ -656,6 +667,7 @@ export default function App() {
                       {(treeByParent.get('root') || []).map((unit) => (
                         <UnitTreeNode
                           key={unit.id}
+                          project={tree.project}
                           unit={unit}
                           treeByParent={treeByParent}
                           commentsByUnit={commentsByUnit}
@@ -991,25 +1003,47 @@ function ProjectSettingsPage(props: {
             <TagEditor tags={props.draft.tags} suggestions={props.suggestions} onChange={(tags) => props.onChange({ ...props.draft, tags })} />
           </section>
 
-          <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
-            <h3 class="text-lg font-bold">Item colors</h3>
-            {(['epic', 'feature', 'story', 'task', 'bug'] as UnitType[]).map((type) => (
-              <Field label={typeLabels[type]} key={type}>
-                <ColorPicker
-                  value={props.draft.unitColors[type]}
-                  onChange={(color) =>
-                    props.onChange({
-                      ...props.draft,
-                      unitColors: {
-                        ...props.draft.unitColors,
-                        [type]: color,
-                      },
-                    })
-                  }
-                />
-              </Field>
-            ))}
-          </section>
+          <div class="space-y-5">
+            <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
+              <h3 class="text-lg font-bold">Item colors</h3>
+              {(['epic', 'feature', 'story', 'task', 'bug'] as UnitType[]).map((type) => (
+                <Field label={typeLabels[type]} key={type}>
+                  <ColorPicker
+                    value={props.draft.unitColors[type]}
+                    onChange={(color) =>
+                      props.onChange({
+                        ...props.draft,
+                        unitColors: {
+                          ...props.draft.unitColors,
+                          [type]: color,
+                        },
+                      })
+                    }
+                  />
+                </Field>
+              ))}
+            </section>
+
+            <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
+              <h3 class="text-lg font-bold">Status colors</h3>
+              {statuses.map((status) => (
+                <Field label={status.label} key={status.key}>
+                  <ColorPicker
+                    value={props.draft.statusColors[status.key]}
+                    onChange={(color) =>
+                      props.onChange({
+                        ...props.draft,
+                        statusColors: {
+                          ...props.draft.statusColors,
+                          [status.key]: color,
+                        },
+                      })
+                    }
+                  />
+                </Field>
+              ))}
+            </section>
+          </div>
         </div>
 
         <div class="flex justify-end">
@@ -1057,9 +1091,10 @@ function BugsPage(props: {
         </div>
 
         {props.bugsView === 'list' ? (
-          <BugList bugs={props.bugs} commentsByUnit={props.commentsByUnit} onOpenDetails={props.onOpenDetails} onEditBug={props.onEditBug} />
+          <BugList project={props.project} bugs={props.bugs} commentsByUnit={props.commentsByUnit} onOpenDetails={props.onOpenDetails} onEditBug={props.onEditBug} />
         ) : (
           <KanbanBoard
+            project={props.project}
             title="Bug Board"
             subtitle="New bugs start in triage before they move into planned work."
             units={props.bugs}
@@ -1075,6 +1110,7 @@ function BugsPage(props: {
 }
 
 function BugList(props: {
+  project: Project
   bugs: Unit[]
   commentsByUnit: Map<string, Comment[]>
   onOpenDetails: (unit: Unit) => void
@@ -1084,7 +1120,7 @@ function BugList(props: {
   return (
     <div class="space-y-3">
       {sorted.map((bug) => (
-        <article class="rounded-xl border border-base-300 bg-base-100 p-3">
+        <article class="rounded-xl border border-base-300 bg-base-100 p-3" style={statusBorderStyle(props.project, bug.status)}>
           <div class="flex flex-wrap items-start justify-between gap-3">
             <div class="min-w-0 flex-1">
               <div class="flex flex-wrap items-center gap-2">
@@ -1192,6 +1228,7 @@ function KanbanRoutePage(props: {
 
       {!taskUnit && (
         <KanbanBoard
+          project={props.project}
           title={laneTitle}
           subtitle={currentUnit ? `Direct ${typeLabels[nextChildType[currentUnit.type] as UnitType] || 'Task'} children only` : 'Direct epics only'}
           units={children}
@@ -1220,6 +1257,7 @@ function KanbanRoutePage(props: {
 }
 
 function KanbanBoard(props: {
+  project: Project
   title: string
   subtitle: string
   units: Unit[]
@@ -1259,7 +1297,7 @@ function KanbanBoard(props: {
               </div>
               <div class="space-y-3">
                 {laneUnits.map((unit) => (
-                  <UnitKanbanCard unit={unit} onOpenRoute={props.onOpenRoute} onOpenDetails={props.onOpenDetails} />
+                  <UnitKanbanCard project={props.project} unit={unit} onOpenRoute={props.onOpenRoute} onOpenDetails={props.onOpenDetails} />
                 ))}
                 {!laneUnits.length && <div class="rounded-xl border border-dashed border-base-300 px-3 py-5 text-center text-xs text-base-content/75">No items</div>}
               </div>
@@ -1271,11 +1309,12 @@ function KanbanBoard(props: {
   )
 }
 
-function UnitKanbanCard(props: { unit: Unit; onOpenRoute: (unit: Unit) => void; onOpenDetails: (unit: Unit) => void }) {
+function UnitKanbanCard(props: { project: Project; unit: Unit; onOpenRoute: (unit: Unit) => void; onOpenDetails: (unit: Unit) => void }) {
   return (
     <article
       draggable
       class="rounded-xl border border-base-300 bg-base-100 p-2.5 shadow-sm transition hover:-translate-y-0.5 hover:border-primary/50"
+      style={statusBorderStyle(props.project, props.unit.status)}
       onDragStart={(event) => event.dataTransfer?.setData('text/unit-id', props.unit.id)}
       onClick={() => props.onOpenRoute(props.unit)}
     >
@@ -1567,6 +1606,7 @@ function CollapsibleMarkdown(props: { title: string; source: string }) {
 }
 
 function UnitTreeNode(props: {
+  project: Project
   unit: Unit
   treeByParent: Map<string, Unit[]>
   commentsByUnit: Map<string, Comment[]>
@@ -1577,7 +1617,7 @@ function UnitTreeNode(props: {
 }) {
   const children = props.treeByParent.get(props.unit.id) || []
   return (
-    <div class="rounded-xl border border-base-300 bg-base-100 p-3">
+    <div class="rounded-xl border border-base-300 bg-base-100 p-3" style={statusBorderStyle(props.project, props.unit.status)}>
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="min-w-0 flex-1 cursor-pointer" onClick={() => props.onOpenRoute(props.unit)}>
           <div class="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-base-content/75">
@@ -1616,7 +1656,7 @@ function UnitTreeNode(props: {
       {!!children.length && (
         <div class="mt-4 space-y-3 border-l-2 border-base-300 pl-4">
           {children.map((child) => (
-            <UnitTreeNode unit={child} treeByParent={props.treeByParent} commentsByUnit={props.commentsByUnit} onOpenRoute={props.onOpenRoute} onOpenDetails={props.onOpenDetails} onEdit={props.onEdit} onCreateChild={props.onCreateChild} />
+            <UnitTreeNode project={props.project} unit={child} treeByParent={props.treeByParent} commentsByUnit={props.commentsByUnit} onOpenRoute={props.onOpenRoute} onOpenDetails={props.onOpenDetails} onEdit={props.onEdit} onCreateChild={props.onCreateChild} />
           ))}
         </div>
       )}
@@ -1674,6 +1714,13 @@ function ApiEndpoint(props: { method: string; path: string; description: string 
       <p class="mt-2 text-xs text-base-content/82">{props.description}</p>
     </div>
   )
+}
+
+function statusBorderStyle(project: Project, status: UnitStatus) {
+  return {
+    borderRightColor: project.statusColors[status],
+    borderRightWidth: '4px',
+  }
 }
 
 function statusLabel(status: UnitStatus) {
