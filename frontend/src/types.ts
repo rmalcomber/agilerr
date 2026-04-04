@@ -68,3 +68,5 @@ export interface SmartAddMessage {
   role: 'user' | 'assistant'
   content: string
 }
+
+export type ProjectPage = 'backlog' | 'kanban' | 'api'

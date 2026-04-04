@@ -71,6 +71,7 @@ func (s *AgilerrService) RegisterRoutes(e *core.ServeEvent) {
 	group.GET("/projects", s.handleProjectsList)
 	group.POST("/projects", s.handleProjectCreate)
 	group.GET("/projects/{projectId}", s.handleProjectTree)
+	group.PATCH("/projects/{projectId}", s.handleProjectUpdate)
 	group.GET("/projects/{projectId}/suggest", s.handleSuggestions)
 	group.POST("/projects/{projectId}/units", s.handleUnitCreate)
 	group.PATCH("/units/{unitId}", s.handleUnitUpdate)
@@ -129,6 +130,35 @@ func (s *AgilerrService) handleProjectCreate(e *core.RequestEvent) error {
 	record = record.Fresh()
 
 	return e.JSON(http.StatusCreated, map[string]any{"project": recordToProject(record)})
+}
+
+func (s *AgilerrService) handleProjectUpdate(e *core.RequestEvent) error {
+	projectRecord, err := findProject(s.app, e.Request.PathValue("projectId"))
+	if err != nil {
+		return notFound(e, "project not found")
+	}
+
+	var req CreateProjectRequest
+	if err := e.BindBody(&req); err != nil {
+		return badRequest(e, "invalid request body", err)
+	}
+
+	req.Name = firstNonEmpty(strings.TrimSpace(req.Name), projectRecord.GetString("name"))
+	if req.Name == "" {
+		return badRequest(e, "project name is required", nil)
+	}
+
+	projectRecord.Set("name", req.Name)
+	projectRecord.Set("description", strings.TrimSpace(req.Description))
+	projectRecord.Set("color", firstNonEmpty(strings.TrimSpace(req.Color), projectRecord.GetString("color"), defaultProjectColor))
+	projectRecord.Set("tags", normalizeTags(req.Tags))
+
+	if err := s.app.Save(projectRecord); err != nil {
+		return badRequest(e, "failed to update project", err)
+	}
+	projectRecord = projectRecord.Fresh()
+
+	return e.JSON(http.StatusOK, map[string]any{"project": recordToProject(projectRecord)})
 }
 
 func (s *AgilerrService) handleProjectTree(e *core.RequestEvent) error {

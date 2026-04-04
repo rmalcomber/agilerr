@@ -9,6 +9,7 @@ import type {
   Comment,
   Mention,
   Project,
+  ProjectPage,
   ProjectTree,
   SmartAddMessage,
   Suggestions,
@@ -39,11 +40,13 @@ const nextChildType: Record<UnitType, UnitType | null> = {
   task: null,
 }
 
+const presetColors = ['#c2410c', '#2563eb', '#0f766e', '#7c3aed', '#e11d48']
+
 const defaultColors: Record<UnitType, string> = {
-  epic: '#c2410c',
-  feature: '#2563eb',
-  story: '#0f766e',
-  task: '#7c3aed',
+  epic: presetColors[0],
+  feature: presetColors[1],
+  story: presetColors[2],
+  task: presetColors[3],
 }
 
 type UnitDraft = {
@@ -61,7 +64,7 @@ type UnitDraft = {
 const emptyProjectDraft = {
   name: '',
   description: '',
-  color: '#2563eb',
+  color: presetColors[1],
   tags: [] as string[],
 }
 
@@ -69,6 +72,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  const [currentPage, setCurrentPage] = useState<ProjectPage>('backlog')
   const [tree, setTree] = useState<ProjectTree | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -76,6 +80,8 @@ export default function App() {
   const [authForm, setAuthForm] = useState({ email: '', password: '', name: '' })
   const [projectModalOpen, setProjectModalOpen] = useState(false)
   const [projectDraft, setProjectDraft] = useState(emptyProjectDraft)
+  const [projectEditorOpen, setProjectEditorOpen] = useState(false)
+  const [projectEditor, setProjectEditor] = useState(emptyProjectDraft)
   const [unitEditor, setUnitEditor] = useState<UnitDraft | null>(null)
   const [activeUnitId, setActiveUnitId] = useState<string | null>(null)
   const [commentBody, setCommentBody] = useState('')
@@ -166,6 +172,12 @@ export default function App() {
     try {
       const result = await api.projectTree(projectId)
       setTree(result)
+      setProjectEditor({
+        name: result.project.name,
+        description: result.project.description,
+        color: result.project.color,
+        tags: [...result.project.tags],
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load project')
     }
@@ -211,6 +223,19 @@ export default function App() {
       await loadProject(response.project.id)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create project')
+    }
+  }
+
+  async function handleUpdateProject(event: Event) {
+    event.preventDefault()
+    if (!selectedProjectId) return
+    try {
+      const response = await api.updateProject(selectedProjectId, projectEditor)
+      setProjects((current) => current.map((project) => (project.id === response.project.id ? response.project : project)))
+      setProjectEditorOpen(false)
+      await loadProject(selectedProjectId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update project')
     }
   }
 
@@ -356,19 +381,19 @@ export default function App() {
 
   if (!currentUser) {
     return (
-      <div class="min-h-screen bg-[radial-gradient(circle_at_top,#fde68a,transparent_30%),linear-gradient(135deg,#f7f4ec,#efe7d5)] px-4 py-10">
-        <div class="mx-auto grid max-w-6xl gap-10 lg:grid-cols-[1.15fr,0.85fr]">
-          <section class="rounded-[2rem] border border-base-300/70 bg-base-100/80 p-8 shadow-panel backdrop-blur">
+      <div class="min-h-screen bg-[radial-gradient(circle_at_top,#1e293b,transparent_28%),linear-gradient(135deg,#0f172a,#111827)] px-4 py-8">
+        <div class="mx-auto grid max-w-[1600px] gap-8 lg:grid-cols-[1.05fr,0.75fr]">
+          <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-7 shadow-panel backdrop-blur">
             <p class="mb-4 inline-flex rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-accent">
               Agilerr
             </p>
-            <h1 class="max-w-2xl text-5xl font-black leading-tight text-neutral">Simple Scrum boards for local teams and Dockerized demos.</h1>
-            <p class="mt-6 max-w-xl text-base text-neutral/70">
+            <h1 class="max-w-2xl text-4xl font-black leading-tight text-base-content">Simple Scrum boards for local teams and Dockerized demos.</h1>
+            <p class="mt-5 max-w-xl text-sm text-base-content/85">
               PocketBase handles authentication and storage. The Go API enforces the strict backlog hierarchy. Preact keeps the UI lean.
             </p>
-            <div class="mt-8 grid gap-4 sm:grid-cols-3">
+            <div class="mt-7 grid gap-3 sm:grid-cols-3">
               <ValueCard title="Strict hierarchy" body="Project -> Epic -> Feature -> User Story -> Task." />
-              <ValueCard title="Board and backlog" body="Drag units between swim lanes while still browsing the backlog tree." />
+              <ValueCard title="Board and backlog" body="Separate backlog and kanban pages, with a lightweight API guide in-app." />
               <ValueCard title="Smart Add" body="Use your OpenAI key to clean up items and ask for missing clarity." />
             </div>
           </section>
@@ -404,7 +429,7 @@ export default function App() {
                 {authMode === 'login' ? 'Sign in' : 'Create account'}
               </button>
 
-              <p class="text-sm text-neutral/60">Admin access is seeded by the backend from `ADMIN_EMAIL` and `ADMIN_PASSWORD`.</p>
+              <p class="text-sm text-base-content/80">Admin access is seeded by the backend from `ADMIN_EMAIL` and `ADMIN_PASSWORD`.</p>
             </div>
           </form>
         </div>
@@ -413,83 +438,103 @@ export default function App() {
   }
 
   return (
-    <div class="min-h-screen bg-[linear-gradient(180deg,#f7f4ec_0%,#efe7d5_100%)] text-neutral">
-      <div class="grid min-h-screen lg:grid-cols-[280px,1fr]">
-        <aside class="border-r border-base-300/70 bg-base-100/70 p-5 backdrop-blur">
+    <div class="min-h-screen bg-[radial-gradient(circle_at_top,#1e293b,transparent_20%),linear-gradient(180deg,#0f172a_0%,#111827_100%)] text-base-content">
+      <div class="grid min-h-screen lg:grid-cols-[240px,1fr]">
+        <aside class="border-r border-base-300/50 bg-base-100/75 p-4 backdrop-blur">
           <div class="flex items-start justify-between gap-3">
             <div>
               <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">Agilerr</p>
-              <h2 class="mt-2 text-2xl font-black">Projects</h2>
+              <h2 class="mt-1.5 text-xl font-black">Projects</h2>
             </div>
-            <button class="btn btn-primary btn-sm" onClick={() => setProjectModalOpen(true)}>
+            <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={() => setProjectModalOpen(true)}>
               New
             </button>
           </div>
 
-          <div class="mt-6 space-y-2">
+          <div class="mt-5 space-y-2">
             {projects.map((project) => (
               <button
                 key={project.id}
-                class={`w-full rounded-2xl border px-4 py-3 text-left transition ${
+                class={`w-full rounded-xl border px-3 py-2.5 text-left transition ${
                   selectedProjectId === project.id ? 'border-primary bg-primary/10' : 'border-base-300 bg-base-100 hover:border-primary/50'
                 }`}
-                onClick={() => setSelectedProjectId(project.id)}
+                onClick={() => {
+                  setSelectedProjectId(project.id)
+                  setCurrentPage('backlog')
+                }}
               >
                 <div class="flex items-center gap-3">
                   <span class="h-3 w-3 rounded-full" style={{ backgroundColor: project.color }} />
-                  <span class="font-semibold">{project.name}</span>
+                  <span class="font-semibold text-sm">{project.name}</span>
                 </div>
-                <p class="mt-2 line-clamp-2 text-sm text-neutral/60">{project.description || 'No description yet.'}</p>
+                <p class="mt-1.5 line-clamp-2 text-xs text-base-content/85">{project.description || 'No description yet.'}</p>
               </button>
             ))}
-            {!projects.length && <div class="rounded-2xl border border-dashed border-base-300 bg-base-100 p-4 text-sm text-neutral/60">Create the first project to start.</div>}
+            {!projects.length && <div class="rounded-xl border border-dashed border-base-300 bg-base-100 p-3 text-xs text-base-content/80">Create the first project to start.</div>}
           </div>
 
-          <div class="mt-8 rounded-2xl border border-base-300 bg-base-100 p-4">
+          <div class="mt-6 rounded-xl border border-base-300 bg-base-100 p-3">
             <div class="flex items-center gap-3">
-              <img class="h-11 w-11 rounded-full ring-2 ring-base-300" src={currentUser.gravatar || gravatar(currentUser.email)} alt={currentUser.name} />
+              <img class="h-10 w-10 rounded-full ring-2 ring-base-300" src={currentUser.gravatar || gravatar(currentUser.email)} alt={currentUser.name} />
               <div>
-                <div class="font-semibold">{currentUser.name}</div>
-                <div class="text-sm text-neutral/60">{currentUser.email}</div>
+                <div class="text-sm font-semibold">{currentUser.name}</div>
+                <div class="text-xs text-base-content/85">{currentUser.email}</div>
               </div>
             </div>
-            <button class="btn btn-outline btn-sm mt-4 w-full" onClick={() => pb.authStore.clear()}>
+            <button class="btn btn-outline btn-sm mt-3 h-9 min-h-9 w-full" onClick={() => pb.authStore.clear()}>
               Log out
             </button>
           </div>
         </aside>
 
-        <main class="p-4 sm:p-6">
+        <main class="p-4 sm:p-5">
           {error && <div class="alert alert-error mb-4">{error}</div>}
           {tree ? (
             <>
-              <header class="mb-6 rounded-[2rem] border border-base-300/70 bg-base-100/80 p-6 shadow-panel">
-                <div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <header class="mb-5 rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div>
                     <div class="flex items-center gap-3">
                       <span class="h-4 w-4 rounded-full" style={{ backgroundColor: tree.project.color }} />
-                      <h1 class="text-3xl font-black">{tree.project.name}</h1>
+                      <h1 class="text-2xl font-black">{tree.project.name}</h1>
                     </div>
-                    <p class="mt-3 max-w-3xl text-neutral/70">{tree.project.description || 'No project description yet.'}</p>
-                    <div class="mt-4 flex flex-wrap gap-2">
+                    <p class="mt-2.5 max-w-3xl text-sm text-base-content/90">{tree.project.description || 'No project description yet.'}</p>
+                    <div class="mt-3 flex flex-wrap gap-2">
                       {tree.tags.map((tag) => (
-                        <span class="badge badge-outline" key={tag}>
+                        <span class="badge badge-outline border-base-content/40 text-base-content" key={tag}>
                           {tag}
                         </span>
                       ))}
                     </div>
                   </div>
-                  <button class="btn btn-primary" onClick={() => openNewUnit(tree.project.id)}>
-                    Add Epic
+                  <div class="flex flex-wrap gap-2">
+                    <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={() => setProjectEditorOpen(true)}>
+                      Edit Project
+                    </button>
+                    <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={() => openNewUnit(tree.project.id)}>
+                      Add Epic
+                    </button>
+                  </div>
+                </div>
+
+                <div class="mt-5 tabs tabs-boxed inline-flex">
+                  <button class={`tab ${currentPage === 'backlog' ? 'tab-active' : ''}`} onClick={() => setCurrentPage('backlog')}>
+                    Backlog
+                  </button>
+                  <button class={`tab ${currentPage === 'kanban' ? 'tab-active' : ''}`} onClick={() => setCurrentPage('kanban')}>
+                    Kanban
+                  </button>
+                  <button class={`tab ${currentPage === 'api' ? 'tab-active' : ''}`} onClick={() => setCurrentPage('api')}>
+                    API
                   </button>
                 </div>
               </header>
 
-              <div class="grid gap-6 xl:grid-cols-[0.95fr,1.05fr]">
-                <section class="rounded-[2rem] border border-base-300/70 bg-base-100/80 p-5 shadow-panel">
+              {currentPage === 'backlog' && (
+                <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-4 shadow-panel">
                   <div class="mb-4 flex items-center justify-between">
-                    <h2 class="text-xl font-bold">Backlog</h2>
-                    <span class="text-sm text-neutral/60">{units.length} units</span>
+                    <h2 class="text-lg font-bold">Backlog</h2>
+                    <span class="text-xs text-base-content/75">{units.length} units</span>
                   </div>
                   <div class="space-y-3">
                     {(treeByParent.get('root') || []).map((unit) => (
@@ -503,14 +548,16 @@ export default function App() {
                         onCreateChild={(target) => openNewUnit(tree.project.id, target)}
                       />
                     ))}
-                    {!units.length && <div class="rounded-2xl border border-dashed border-base-300 p-4 text-sm text-neutral/60">No units yet. Start with an Epic.</div>}
+                    {!units.length && <div class="rounded-xl border border-dashed border-base-300 p-3 text-xs text-base-content/80">No units yet. Start with an Epic.</div>}
                   </div>
                 </section>
+              )}
 
-                <section class="rounded-[2rem] border border-base-300/70 bg-base-100/80 p-5 shadow-panel">
+              {currentPage === 'kanban' && (
+                <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-4 shadow-panel">
                   <div class="mb-4 flex items-center justify-between">
-                    <h2 class="text-xl font-bold">Kanban</h2>
-                    <span class="text-sm text-neutral/60">Drag cards between lanes</span>
+                    <h2 class="text-lg font-bold">Kanban</h2>
+                    <span class="text-xs text-base-content/75">Drag cards between lanes</span>
                   </div>
                   <div class="grid gap-4 xl:grid-cols-4">
                     {statuses.map((status) => {
@@ -521,7 +568,7 @@ export default function App() {
                       return (
                         <div
                           key={status.key}
-                          class="rounded-2xl border border-base-300 bg-base-200/60 p-3"
+                          class="rounded-xl border border-base-300 bg-base-200/60 p-2.5"
                           onDragOver={(event) => event.preventDefault()}
                           onDrop={(event) => {
                             event.preventDefault()
@@ -538,16 +585,16 @@ export default function App() {
                               <button
                                 key={unit.id}
                                 draggable
-                                class="block w-full rounded-2xl border border-base-300 bg-base-100 p-3 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/50"
+                                class="block w-full rounded-xl border border-base-300 bg-base-100 p-2.5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary/50"
                                 onDragStart={(event) => event.dataTransfer?.setData('text/unit-id', unit.id)}
                                 onClick={() => setActiveUnitId(unit.id)}
                               >
-                                <div class="flex items-center gap-2 text-xs uppercase tracking-wide text-neutral/50">
+                                <div class="flex items-center gap-2 text-xs uppercase tracking-wide text-base-content/70">
                                   <span class="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: unit.color }} />
                                   <span>{typeLabels[unit.type]}</span>
                                 </div>
-                                <div class="mt-2 font-semibold">{unit.title}</div>
-                                <div class="mt-2 line-clamp-3 text-sm text-neutral/60">{plainText(unit.description) || 'No description yet.'}</div>
+                                <div class="mt-1.5 text-sm font-semibold">{unit.title}</div>
+                                <div class="mt-1.5 line-clamp-3 text-xs text-base-content/90">{plainText(unit.description) || 'No description yet.'}</div>
                               </button>
                             ))}
                           </div>
@@ -556,10 +603,12 @@ export default function App() {
                     })}
                   </div>
                 </section>
-              </div>
+              )}
+
+              {currentPage === 'api' && <ApiDocsPage projectId={tree.project.id} />}
             </>
           ) : (
-            <div class="rounded-[2rem] border border-base-300/70 bg-base-100/80 p-8 shadow-panel">Select or create a project.</div>
+            <div class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-6 shadow-panel">Select or create a project.</div>
           )}
         </main>
       </div>
@@ -574,7 +623,7 @@ export default function App() {
               <textarea class="textarea textarea-bordered min-h-28 w-full" value={projectDraft.description} onInput={(e) => setProjectDraft({ ...projectDraft, description: (e.currentTarget as HTMLTextAreaElement).value })} />
             </Field>
             <Field label="Color">
-              <input class="input input-bordered w-full" value={projectDraft.color} onInput={(e) => setProjectDraft({ ...projectDraft, color: (e.currentTarget as HTMLInputElement).value })} />
+              <ColorPicker value={projectDraft.color} onChange={(color) => setProjectDraft({ ...projectDraft, color })} />
             </Field>
             <TagEditor tags={projectDraft.tags} suggestions={suggestions.tags} onChange={(tags) => setProjectDraft({ ...projectDraft, tags })} />
             <div class="flex justify-end gap-2">
@@ -589,112 +638,137 @@ export default function App() {
         </Modal>
       )}
 
+      {projectEditorOpen && (
+        <Modal title="Edit Project" onClose={() => setProjectEditorOpen(false)}>
+          <form class="space-y-4" onSubmit={handleUpdateProject}>
+            <Field label="Name">
+              <input class="input input-bordered w-full" required value={projectEditor.name} onInput={(e) => setProjectEditor({ ...projectEditor, name: (e.currentTarget as HTMLInputElement).value })} />
+            </Field>
+            <Field label="Description">
+              <textarea class="textarea textarea-bordered min-h-36 w-full" value={projectEditor.description} onInput={(e) => setProjectEditor({ ...projectEditor, description: (e.currentTarget as HTMLTextAreaElement).value })} />
+            </Field>
+            <Field label="Color">
+              <ColorPicker value={projectEditor.color} onChange={(color) => setProjectEditor({ ...projectEditor, color })} />
+            </Field>
+            <TagEditor tags={projectEditor.tags} suggestions={tree?.tags || []} onChange={(tags) => setProjectEditor({ ...projectEditor, tags })} />
+            <div class="flex justify-end gap-2">
+              <button class="btn btn-ghost" type="button" onClick={() => setProjectEditorOpen(false)}>
+                Cancel
+              </button>
+              <button class="btn btn-primary" type="submit">
+                Save project
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
       {unitEditor && (
         <Modal title={unitEditor.id ? 'Edit Unit' : `Add ${typeLabels[unitEditor.type]}`} onClose={() => setUnitEditor(null)} wide>
-          <form class="space-y-4" onSubmit={saveUnit}>
-            <div class="grid gap-4 md:grid-cols-2">
-              <Field label="Type">
-                <select
-                  class="select select-bordered w-full"
-                  value={unitEditor.type}
-                  disabled={Boolean(unitEditor.parentId)}
-                  onChange={(e) => setUnitEditor({ ...unitEditor, type: (e.currentTarget as HTMLSelectElement).value as UnitType })}
-                >
-                  {(['epic', 'feature', 'story', 'task'] as UnitType[]).map((type) => (
-                    <option key={type} value={type}>
-                      {typeLabels[type]}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Status">
-                <select class="select select-bordered w-full" value={unitEditor.status} onChange={(e) => setUnitEditor({ ...unitEditor, status: (e.currentTarget as HTMLSelectElement).value as UnitStatus })}>
-                  {statuses.map((status) => (
-                    <option key={status.key} value={status.key}>
-                      {status.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-
-            <Field label="Title">
-              <input class="input input-bordered w-full" required value={unitEditor.title} onInput={(e) => setUnitEditor({ ...unitEditor, title: (e.currentTarget as HTMLInputElement).value })} />
-            </Field>
-
-            <Field label="Description (Markdown supported)">
-              <textarea class="textarea textarea-bordered min-h-36 w-full" value={unitEditor.description} onInput={(e) => setUnitEditor({ ...unitEditor, description: (e.currentTarget as HTMLTextAreaElement).value })} />
-            </Field>
-
-            <div class="grid gap-4 md:grid-cols-2">
-              <Field label="Color">
-                <input class="input input-bordered w-full" value={unitEditor.color} onInput={(e) => setUnitEditor({ ...unitEditor, color: (e.currentTarget as HTMLInputElement).value })} />
-              </Field>
-              <Field label="Parent">
-                <select class="select select-bordered w-full" value={unitEditor.parentId || ''} onChange={(e) => setUnitEditor({ ...unitEditor, parentId: (e.currentTarget as HTMLSelectElement).value || undefined })}>
-                  <option value="">No parent</option>
-                  {units
-                    .filter((unit) => unit.id !== unitEditor.id)
-                    .map((unit) => (
-                      <option key={unit.id} value={unit.id}>
-                        {typeLabels[unit.type]}: {unit.title}
+          <form class="space-y-5" onSubmit={saveUnit}>
+            <div class="grid gap-6 lg:grid-cols-[1fr,0.9fr]">
+              <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
+                <h3 class="text-lg font-bold">Required</h3>
+                <Field label="Type">
+                  <select
+                    class="select select-bordered w-full"
+                    value={unitEditor.type}
+                    disabled={Boolean(unitEditor.parentId)}
+                    onChange={(e) => setUnitEditor({ ...unitEditor, type: (e.currentTarget as HTMLSelectElement).value as UnitType })}
+                  >
+                    {(['epic', 'feature', 'story', 'task'] as UnitType[]).map((type) => (
+                      <option key={type} value={type}>
+                        {typeLabels[type]}
                       </option>
                     ))}
-                </select>
-              </Field>
-            </div>
+                  </select>
+                </Field>
+                <Field label="Title">
+                  <input class="input input-bordered w-full" required value={unitEditor.title} onInput={(e) => setUnitEditor({ ...unitEditor, title: (e.currentTarget as HTMLInputElement).value })} />
+                </Field>
+                <Field label="Description (Markdown supported)">
+                  <textarea class="textarea textarea-bordered min-h-52 w-full" value={unitEditor.description} onInput={(e) => setUnitEditor({ ...unitEditor, description: (e.currentTarget as HTMLTextAreaElement).value })} />
+                </Field>
+                <div class="grid gap-4 lg:grid-cols-2">
+                  <MentionPanel title="Mention users" items={suggestions.users.map((item) => ({ id: item.id, label: item.label, type: 'user' as const }))} onPick={(mention) => insertMention('description', mention)} />
+                  <MentionPanel title="Mention units" items={suggestions.units.map((item) => ({ id: item.id, label: item.label, type: 'unit' as const }))} onPick={(mention) => insertMention('description', mention)} />
+                </div>
+              </section>
 
-            <TagEditor tags={unitEditor.tags} suggestions={tree?.tags || []} onChange={(tags) => setUnitEditor({ ...unitEditor, tags })} />
-
-            <div class="rounded-2xl border border-base-300 bg-base-200/60 p-4">
-              <div class="mb-3 flex items-center justify-between">
-                <h3 class="font-semibold">Smart Add</h3>
-                <button class="btn btn-outline btn-sm" type="button" onClick={() => setSmartAddOpen((current) => !current)}>
-                  {smartAddOpen ? 'Hide' : 'Open'}
-                </button>
-              </div>
-
-              {smartAddOpen && (
-                <div class="space-y-3">
-                  <div class="max-h-60 space-y-2 overflow-auto rounded-2xl bg-base-100 p-3">
-                    {smartAddMessages.map((message, index) => (
-                      <div key={`${message.role}-${index}`} class={`chat ${message.role === 'user' ? 'chat-end' : 'chat-start'}`}>
-                        <div class={`chat-bubble ${message.role === 'user' ? 'chat-bubble-primary' : ''}`}>{message.content}</div>
-                      </div>
+              <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
+                <h3 class="text-lg font-bold">Optional</h3>
+                <Field label="Status">
+                  <select class="select select-bordered w-full" value={unitEditor.status} onChange={(e) => setUnitEditor({ ...unitEditor, status: (e.currentTarget as HTMLSelectElement).value as UnitStatus })}>
+                    {statuses.map((status) => (
+                      <option key={status.key} value={status.key}>
+                        {status.label}
+                      </option>
                     ))}
-                    {!smartAddMessages.length && <p class="text-sm text-neutral/60">Ask the assistant to tighten the item or call out missing detail.</p>}
-                  </div>
-                  <textarea class="textarea textarea-bordered min-h-24 w-full" placeholder="What should be improved or clarified?" value={smartAddInput} onInput={(e) => setSmartAddInput((e.currentTarget as HTMLTextAreaElement).value)} />
-                  <div class="flex flex-wrap items-center justify-between gap-2">
-                    {smartAddSuggestion ? (
-                      <button
-                        class="btn btn-secondary btn-sm"
-                        type="button"
-                        onClick={() => {
-                          setUnitEditor({
-                            ...unitEditor,
-                            title: smartAddSuggestion.title,
-                            description: smartAddSuggestion.description,
-                          })
-                          setSmartAddOpen(false)
-                        }}
-                      >
-                        Apply suggestion
-                      </button>
-                    ) : (
-                      <span class="text-sm text-neutral/60">Configured with `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`.</span>
-                    )}
-                    <button class="btn btn-primary btn-sm" disabled={smartAddLoading} type="button" onClick={() => void runSmartAdd()}>
-                      {smartAddLoading ? 'Thinking...' : 'Send to Smart Add'}
+                  </select>
+                </Field>
+                <Field label="Parent">
+                  <select class="select select-bordered w-full" value={unitEditor.parentId || ''} onChange={(e) => setUnitEditor({ ...unitEditor, parentId: (e.currentTarget as HTMLSelectElement).value || undefined })}>
+                    <option value="">No parent</option>
+                    {units
+                      .filter((unit) => unit.id !== unitEditor.id)
+                      .map((unit) => (
+                        <option key={unit.id} value={unit.id}>
+                          {typeLabels[unit.type]}: {unit.title}
+                        </option>
+                      ))}
+                  </select>
+                </Field>
+                <Field label="Color">
+                  <ColorPicker value={unitEditor.color} onChange={(color) => setUnitEditor({ ...unitEditor, color })} />
+                </Field>
+                <TagEditor tags={unitEditor.tags} suggestions={tree?.tags || []} onChange={(tags) => setUnitEditor({ ...unitEditor, tags })} />
+
+                <div class="rounded-2xl border border-base-300 bg-base-200/60 p-4">
+                  <div class="mb-3 flex items-center justify-between">
+                    <h3 class="font-semibold">Smart Add</h3>
+                    <button class="btn btn-outline btn-sm" type="button" onClick={() => setSmartAddOpen((current) => !current)}>
+                      {smartAddOpen ? 'Hide' : 'Open'}
                     </button>
                   </div>
-                </div>
-              )}
-            </div>
 
-            <div class="grid gap-4 lg:grid-cols-2">
-              <MentionPanel title="Mention users" items={suggestions.users.map((item) => ({ id: item.id, label: item.label, type: 'user' as const }))} onPick={(mention) => insertMention('description', mention)} />
-              <MentionPanel title="Mention units" items={suggestions.units.map((item) => ({ id: item.id, label: item.label, type: 'unit' as const }))} onPick={(mention) => insertMention('description', mention)} />
+                  {smartAddOpen && (
+                    <div class="space-y-3">
+                      <div class="max-h-60 space-y-2 overflow-auto rounded-2xl bg-base-100 p-3">
+                        {smartAddMessages.map((message, index) => (
+                          <div key={`${message.role}-${index}`} class={`chat ${message.role === 'user' ? 'chat-end' : 'chat-start'}`}>
+                            <div class={`chat-bubble ${message.role === 'user' ? 'chat-bubble-primary' : ''}`}>{message.content}</div>
+                          </div>
+                        ))}
+                        {!smartAddMessages.length && <p class="text-sm text-base-content/85">Ask the assistant to tighten the item or call out missing detail.</p>}
+                      </div>
+                      <textarea class="textarea textarea-bordered min-h-24 w-full" placeholder="What should be improved or clarified?" value={smartAddInput} onInput={(e) => setSmartAddInput((e.currentTarget as HTMLTextAreaElement).value)} />
+                      <div class="flex flex-wrap items-center justify-between gap-2">
+                        {smartAddSuggestion ? (
+                          <button
+                            class="btn btn-secondary btn-sm"
+                            type="button"
+                            onClick={() => {
+                              setUnitEditor({
+                                ...unitEditor,
+                                title: smartAddSuggestion.title,
+                                description: smartAddSuggestion.description,
+                              })
+                              setSmartAddOpen(false)
+                            }}
+                          >
+                            Apply suggestion
+                          </button>
+                        ) : (
+                          <span class="text-sm text-base-content/85">Configured with `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`.</span>
+                        )}
+                        <button class="btn btn-primary btn-sm" disabled={smartAddLoading} type="button" onClick={() => void runSmartAdd()}>
+                          {smartAddLoading ? 'Thinking...' : 'Send to Smart Add'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </section>
             </div>
 
             <div class="rounded-2xl border border-base-300 bg-base-100 p-4">
@@ -728,9 +802,9 @@ export default function App() {
           <div class="space-y-5">
             <div class="flex flex-wrap items-center gap-2">
               <span class="badge badge-primary">{typeLabels[activeUnit.type]}</span>
-              <span class="badge badge-outline">{statuses.find((status) => status.key === activeUnit.status)?.label}</span>
+              <span class="badge badge-outline border-base-content/40 text-base-content">{statuses.find((status) => status.key === activeUnit.status)?.label}</span>
               {activeUnit.tags.map((tag) => (
-                <span class="badge badge-outline" key={tag}>
+                <span class="badge badge-outline border-base-content/40 text-base-content" key={tag}>
                   {tag}
                 </span>
               ))}
@@ -760,13 +834,13 @@ export default function App() {
                       <img class="h-10 w-10 rounded-full" src={userById[comment.authorId]?.gravatar || gravatar(userById[comment.authorId]?.email || '')} alt={userById[comment.authorId]?.name || 'User'} />
                       <div>
                         <div class="font-semibold">{userById[comment.authorId]?.name || 'Unknown user'}</div>
-                        <div class="text-xs text-neutral/50">{new Date(comment.created).toLocaleString()}</div>
+                        <div class="text-xs text-base-content/80">{new Date(comment.created).toLocaleString()}</div>
                       </div>
                     </div>
                     <Markdown source={comment.body} />
                   </article>
                 ))}
-                {!commentsByUnit.get(activeUnit.id)?.length && <div class="rounded-2xl border border-dashed border-base-300 p-4 text-sm text-neutral/60">No comments yet.</div>}
+                {!commentsByUnit.get(activeUnit.id)?.length && <div class="rounded-2xl border border-dashed border-base-300 p-4 text-sm text-base-content/80">No comments yet.</div>}
               </div>
             </section>
 
@@ -792,10 +866,10 @@ export default function App() {
 function Modal(props: { title: string; onClose: () => void; wide?: boolean; children: ComponentChildren }) {
   return (
     <div class="fixed inset-0 z-50 flex items-start justify-center overflow-auto bg-neutral/40 p-4 backdrop-blur-sm">
-      <div class={`mt-8 w-full rounded-[2rem] border border-base-300 bg-base-100 p-6 shadow-panel ${props.wide ? 'max-w-5xl' : 'max-w-2xl'}`}>
-        <div class="mb-5 flex items-center justify-between gap-4">
-          <h2 class="text-2xl font-black">{props.title}</h2>
-          <button class="btn btn-ghost btn-sm" onClick={props.onClose}>
+      <div class={`mt-6 w-full rounded-[1.25rem] border border-base-300 bg-base-100 p-5 shadow-panel ${props.wide ? 'max-w-6xl' : 'max-w-2xl'}`}>
+        <div class="mb-4 flex items-center justify-between gap-4">
+          <h2 class="text-xl font-black">{props.title}</h2>
+          <button class="btn btn-ghost btn-sm h-8 min-h-8" onClick={props.onClose}>
             Close
           </button>
         </div>
@@ -816,9 +890,9 @@ function Field(props: { label: string; children: ComponentChildren }) {
 
 function ValueCard(props: { title: string; body: string }) {
   return (
-    <div class="rounded-2xl border border-base-300 bg-base-100/80 p-4">
-      <h3 class="font-bold">{props.title}</h3>
-      <p class="mt-2 text-sm text-neutral/65">{props.body}</p>
+    <div class="rounded-xl border border-base-300 bg-base-100/80 p-3">
+      <h3 class="text-sm font-bold">{props.title}</h3>
+      <p class="mt-1.5 text-xs text-base-content/82">{props.body}</p>
     </div>
   )
 }
@@ -860,17 +934,40 @@ function TagEditor(props: { tags: string[]; suggestions: string[]; onChange: (ta
   )
 }
 
+function ColorPicker(props: { value: string; onChange: (value: string) => void }) {
+  return (
+    <div class="space-y-3">
+      <div class="flex flex-wrap gap-2">
+        {presetColors.map((color) => (
+          <button
+            key={color}
+            type="button"
+            class={`h-10 w-10 rounded-full border-4 transition ${props.value.toLowerCase() === color.toLowerCase() ? 'border-neutral scale-105' : 'border-base-300'}`}
+            style={{ backgroundColor: color }}
+            onClick={() => props.onChange(color)}
+            aria-label={`Choose color ${color}`}
+          />
+        ))}
+      </div>
+      <div class="flex items-center gap-3">
+        <input class="h-11 w-16 cursor-pointer rounded border border-base-300 bg-transparent p-1" type="color" value={props.value} onInput={(e) => props.onChange((e.currentTarget as HTMLInputElement).value)} />
+        <input class="input input-bordered flex-1" value={props.value} onInput={(e) => props.onChange((e.currentTarget as HTMLInputElement).value)} />
+      </div>
+    </div>
+  )
+}
+
 function MentionPanel(props: { title: string; items: Mention[]; onPick: (mention: Mention) => void }) {
   return (
-    <div class="rounded-2xl border border-base-300 bg-base-100 p-3">
-      <div class="mb-2 text-sm font-semibold">{props.title}</div>
+    <div class="rounded-xl border border-base-300 bg-base-100 p-3">
+      <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-base-content/85">{props.title}</div>
       <div class="flex max-h-36 flex-wrap gap-2 overflow-auto">
         {props.items.slice(0, 12).map((item) => (
-          <button class="badge badge-outline px-3 py-3" key={`${item.type}-${item.id}`} type="button" onClick={() => props.onPick(item)}>
+          <button class="badge badge-outline border-base-content/40 bg-base-100 px-2.5 py-2 text-base-content" key={`${item.type}-${item.id}`} type="button" onClick={() => props.onPick(item)}>
             {item.label}
           </button>
         ))}
-        {!props.items.length && <span class="text-sm text-neutral/50">No suggestions</span>}
+        {!props.items.length && <span class="text-xs text-base-content/75">No suggestions</span>}
       </div>
     </div>
   )
@@ -891,15 +988,15 @@ function UnitTreeNode(props: {
 }) {
   const children = props.treeByParent.get(props.unit.id) || []
   return (
-    <div class="rounded-2xl border border-base-300 bg-base-100 p-4">
+    <div class="rounded-xl border border-base-300 bg-base-100 p-3">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <button class="min-w-0 flex-1 text-left" onClick={() => props.onOpen(props.unit)}>
-          <div class="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-neutral/50">
+          <div class="flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-base-content/70">
             <span class="h-3 w-3 rounded-full" style={{ backgroundColor: props.unit.color }} />
             <span>{typeLabels[props.unit.type]}</span>
           </div>
-          <div class="mt-2 text-lg font-semibold">{props.unit.title}</div>
-          <div class="mt-2 text-sm text-neutral/60">{plainText(props.unit.description) || 'No description yet.'}</div>
+          <div class="mt-1.5 text-base font-semibold">{props.unit.title}</div>
+          <div class="mt-1.5 text-xs text-base-content/90">{plainText(props.unit.description) || 'No description yet.'}</div>
         </button>
         <div class="flex gap-2">
           <button class="btn btn-outline btn-xs" onClick={() => props.onEdit(props.unit)}>
@@ -913,8 +1010,8 @@ function UnitTreeNode(props: {
         </div>
       </div>
       <div class="mt-3 flex flex-wrap gap-2">
-        <span class="badge badge-outline">{statuses.find((status) => status.key === props.unit.status)?.label}</span>
-        <span class="badge badge-outline">{props.commentsByUnit.get(props.unit.id)?.length || 0} comments</span>
+        <span class="badge badge-outline border-base-content/40 text-base-content">{statuses.find((status) => status.key === props.unit.status)?.label}</span>
+        <span class="badge badge-outline border-base-content/40 text-base-content">{props.commentsByUnit.get(props.unit.id)?.length || 0} comments</span>
         {props.unit.tags.map((tag) => (
           <span class="badge" key={tag}>
             {tag}
@@ -928,6 +1025,58 @@ function UnitTreeNode(props: {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+function ApiDocsPage(props: { projectId: string }) {
+  const base = '/api/agilerr'
+  return (
+    <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+      <h2 class="text-lg font-bold">API Usage</h2>
+      <p class="mt-2 text-sm text-base-content/82">All endpoints below require the PocketBase auth token in the `Authorization` header.</p>
+      <div class="mt-6 space-y-4">
+        <ApiEndpoint method="GET" path={`${base}/me`} description="Return the authenticated user profile used by the app shell." />
+        <ApiEndpoint method="GET" path={`${base}/projects`} description="List projects visible to the authenticated user." />
+        <ApiEndpoint method="POST" path={`${base}/projects`} description="Create a project with `name`, `description`, `color`, and `tags`." />
+        <ApiEndpoint method="PATCH" path={`${base}/projects/${props.projectId}`} description="Update the active project's metadata." />
+        <ApiEndpoint method="GET" path={`${base}/projects/${props.projectId}`} description="Fetch the project, units, comments, users, and tag suggestions in a single response." />
+        <ApiEndpoint method="GET" path={`${base}/projects/${props.projectId}/suggest?q=term`} description="Return tag, user, and unit suggestions for mentions and tagging." />
+        <ApiEndpoint method="POST" path={`${base}/projects/${props.projectId}/units`} description="Create a new unit under the project." />
+        <ApiEndpoint method="PATCH" path={`${base}/units/{unitId}`} description="Edit an existing unit." />
+        <ApiEndpoint method="POST" path={`${base}/units/{unitId}/move`} description="Move a unit between kanban lanes using `{ status }`." />
+        <ApiEndpoint method="DELETE" path={`${base}/units/{unitId}`} description="Delete a unit after its child units are removed." />
+        <ApiEndpoint method="GET" path={`${base}/units/{unitId}/comments`} description="List comments for a unit." />
+        <ApiEndpoint method="POST" path={`${base}/units/{unitId}/comments`} description="Create a markdown comment with optional mentions." />
+        <ApiEndpoint method="POST" path={`${base}/smart-add`} description="Refine a draft unit using the configured OpenAI endpoint." />
+      </div>
+
+      <div class="mt-6 rounded-xl border border-base-300 bg-base-200/60 p-4">
+        <h3 class="font-semibold">Example Request</h3>
+        <pre class="mt-3 overflow-auto rounded-xl bg-neutral p-4 text-xs text-neutral-content"><code>{`curl -X POST ${base}/projects/${props.projectId}/units \\
+  -H "Authorization: <pb_auth_token>" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "type": "epic",
+    "status": "todo",
+    "title": "Ship onboarding",
+    "description": "Create the onboarding experience",
+    "color": "#2563eb",
+    "tags": ["onboarding", "mvp"]
+  }'`}</code></pre>
+      </div>
+    </section>
+  )
+}
+
+function ApiEndpoint(props: { method: string; path: string; description: string }) {
+  return (
+    <div class="rounded-xl border border-base-300 bg-base-100 p-3">
+      <div class="flex flex-wrap items-center gap-3">
+        <span class="badge badge-primary">{props.method}</span>
+        <code class="rounded bg-base-200 px-2 py-1 text-sm">{props.path}</code>
+      </div>
+      <p class="mt-2 text-xs text-base-content/82">{props.description}</p>
     </div>
   )
 }

@@ -30,6 +30,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  updateProject: (projectId: string, body: Partial<Project>) =>
+    request<{ project: Project }>(`/api/agilerr/projects/${projectId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
   projectTree: (projectId: string) => request<ProjectTree>(`/api/agilerr/projects/${projectId}`),
   suggestions: (projectId: string, q = '') =>
     request<Suggestions>(`/api/agilerr/projects/${projectId}/suggest?q=${encodeURIComponent(q)}`),
