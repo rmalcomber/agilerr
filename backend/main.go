@@ -41,6 +41,7 @@ func main() {
 
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		service.RegisterRoutes(e)
+		service.RegisterFrontendRoutes(e)
 		return e.Next()
 	})
 

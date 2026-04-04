@@ -1,6 +1,8 @@
 backend/pb_data/
+pb_data/
 frontend/dist/
 frontend/node_modules/
+agilerr
 backend/agilerr
 .env
 .env.local
@@ -11,6 +13,7 @@ backend/agilerr
 backend/*.exe
 backend/*.test
 backend/coverage.out
+backend/web/dist/assets/
 
 # Logs
 *.log

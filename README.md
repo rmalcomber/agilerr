@@ -38,6 +38,26 @@ npm run dev
 - Frontend: `http://localhost:5173`
 - Backend and PocketBase APIs: `http://localhost:8090`
 
+In dev mode the frontend is not embedded. Vite runs separately and proxies API calls to the backend.
+
+## Release Build
+
+Build a single production binary with the frontend embedded:
+
+```bash
+./scripts/build-release.sh
+```
+
+This produces:
+
+- `backend/agilerr`
+
+When started, that binary serves:
+
+- the Agilerr frontend
+- the custom REST API
+- PocketBase auth/storage APIs
+
 ## Docker
 
 ```bash
@@ -45,8 +65,7 @@ cp .env.example .env
 docker compose up --build
 ```
 
-- Frontend: `http://localhost:8080`
-- Backend API: `http://localhost:8090`
+- App, frontend, and backend API: `http://localhost:8090`
 
 ## Important Environment Variables
 
