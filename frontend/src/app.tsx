@@ -741,15 +741,9 @@ export default function App() {
 
           <nav class={`mt-5 ${sidebarCollapsed ? 'w-full' : ''}`}>
             <ul class={`menu rounded-box bg-base-100/75 p-2 ${sidebarCollapsed ? 'items-center' : ''}`}>
-              <li>
-                <button class={`${route.kind === 'root' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate('/')} title="Projects" aria-label="Projects">
-                  <LayoutGrid size={16} />
-                  {!sidebarCollapsed && <span>Projects</span>}
-                </button>
-              </li>
               {selectedProjectId && (
                 <>
-                  <li class={sidebarCollapsed ? '' : 'pl-4'}>
+                  <li>
                     <button class={`${activePage === 'dashboard' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(projectDashboardPath(selectedProjectId))} title="Dashboard" aria-label="Dashboard">
                       <House size={16} />
                       {!sidebarCollapsed && <span>Dashboard</span>}
@@ -786,6 +780,14 @@ export default function App() {
                     </button>
                   </li>
                 </>
+              )}
+              {!selectedProjectId && (
+                <li>
+                  <button class={`${route.kind === 'root' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate('/')} title="Projects" aria-label="Projects">
+                    <LayoutGrid size={16} />
+                    {!sidebarCollapsed && <span>Projects</span>}
+                  </button>
+                </li>
               )}
             </ul>
           </nav>
