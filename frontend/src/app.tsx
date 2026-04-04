@@ -1023,15 +1023,15 @@ function KanbanRoutePage(props: {
           <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
             <UnitDetailContent
               unit={currentUnit}
-              comments={props.commentsByUnit.get(currentUnit.id) || []}
+              comments={[]}
               userById={props.userById}
               suggestions={props.suggestions}
               commentBody={props.commentBody}
               onCommentBodyChange={props.onCommentBodyChange}
               onInsertCommentMention={props.onInsertCommentMention}
               onSaveComment={(event) => props.onSaveComment(event, currentUnit.id)}
-              onEdit={() => props.onEditUnit(currentUnit)}
-              onCreateChild={nextChildType[currentUnit.type] ? () => props.onCreateChild(currentUnit) : undefined}
+              hideActions
+              hideComments
             />
           </section>
         </>
@@ -1048,6 +1048,20 @@ function KanbanRoutePage(props: {
           onOpenRoute={props.onOpenRoute}
           onOpenDetails={props.onOpenDetails}
         />
+      )}
+
+      {currentUnit && (
+        <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+          <UnitCommentsSection
+            comments={props.commentsByUnit.get(currentUnit.id) || []}
+            userById={props.userById}
+            suggestions={props.suggestions}
+            commentBody={props.commentBody}
+            onCommentBodyChange={props.onCommentBodyChange}
+            onInsertCommentMention={props.onInsertCommentMention}
+            onSaveComment={(event) => props.onSaveComment(event, currentUnit.id)}
+          />
+        </section>
       )}
     </section>
   )
@@ -1139,8 +1153,10 @@ function UnitDetailContent(props: {
   onCommentBodyChange: (value: string) => void
   onInsertCommentMention: (mention: Mention) => void
   onSaveComment: (event: Event) => void
-  onEdit: () => void
+  onEdit?: () => void
   onCreateChild?: () => void
+  hideActions?: boolean
+  hideComments?: boolean
 }) {
   return (
     <div class="space-y-5">
@@ -1156,17 +1172,47 @@ function UnitDetailContent(props: {
         <Markdown source={props.unit.description || '*No description yet.*'} />
       </div>
 
-      <div class="flex flex-wrap gap-2">
-        <button class="btn btn-primary btn-sm" onClick={props.onEdit}>
-          Edit unit
-        </button>
-        {props.onCreateChild && (
-          <button class="btn btn-outline btn-sm" onClick={props.onCreateChild}>
-            Add child
-          </button>
-        )}
-      </div>
+      {!props.hideActions && (
+        <div class="flex flex-wrap gap-2">
+          {props.onEdit && (
+            <button class="btn btn-primary btn-sm" onClick={props.onEdit}>
+              Edit unit
+            </button>
+          )}
+          {props.onCreateChild && (
+            <button class="btn btn-outline btn-sm" onClick={props.onCreateChild}>
+              Add child
+            </button>
+          )}
+        </div>
+      )}
 
+      {!props.hideComments && (
+        <UnitCommentsSection
+          comments={props.comments}
+          userById={props.userById}
+          suggestions={props.suggestions}
+          commentBody={props.commentBody}
+          onCommentBodyChange={props.onCommentBodyChange}
+          onInsertCommentMention={props.onInsertCommentMention}
+          onSaveComment={props.onSaveComment}
+        />
+      )}
+    </div>
+  )
+}
+
+function UnitCommentsSection(props: {
+  comments: Comment[]
+  userById: Record<string, User>
+  suggestions: Suggestions
+  commentBody: string
+  onCommentBodyChange: (value: string) => void
+  onInsertCommentMention: (mention: Mention) => void
+  onSaveComment: (event: Event) => void
+}) {
+  return (
+    <div class="space-y-5">
       <section>
         <h3 class="mb-3 text-lg font-bold">Comments</h3>
         <div class="space-y-3">
