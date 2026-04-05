@@ -1,5 +1,6 @@
 backend/pb_data/
 pb_data/
+output/
 frontend/dist/
 frontend/node_modules/
 agilerr
