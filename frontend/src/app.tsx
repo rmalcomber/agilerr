@@ -38,10 +38,14 @@ import type {
   Comment,
   DeletedItem,
   DeletePreview,
+  ManagedUser,
   Mention,
   Project,
+  ProjectMembership,
+  ProjectPermissions,
   ProjectPage,
   ProjectTree,
+  SaveMembership,
   Suggestions,
   Unit,
   BugPriority,
@@ -163,6 +167,7 @@ type AppRoute =
   | { kind: 'api' }
   | { kind: 'deleted' }
   | { kind: 'mcp' }
+  | { kind: 'users' }
   | {
       kind: 'project'
       projectId: string
@@ -204,6 +209,15 @@ type HardDeleteModalState = {
   loading: boolean
 }
 
+type UserEditorState = {
+  id?: string
+  email: string
+  name: string
+  systemAdmin: boolean
+  createProjects: boolean
+  memberships: SaveMembership[]
+}
+
 type ShortcutItem = {
   keys: string
   description: string
@@ -216,6 +230,25 @@ const emptyProjectDraft = {
   tags: [] as string[],
   unitColors: { ...defaultUnitColors } as UnitColors,
   statusColors: { ...defaultStatusColors } as StatusColors,
+}
+
+const emptyUserEditor: UserEditorState = {
+  email: '',
+  name: '',
+  systemAdmin: false,
+  createProjects: true,
+  memberships: [],
+}
+
+const noProjectPermissions: ProjectPermissions = {
+  viewUnits: false,
+  editUnits: false,
+  deleteUnits: false,
+  addWithAI: false,
+  viewProject: false,
+  editProject: false,
+  editProjectSettings: false,
+  projectAdmin: false,
 }
 
 function canAIAddType(targetType: string) {
@@ -258,16 +291,21 @@ function readStoredBugsView() {
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const [memberships, setMemberships] = useState<ProjectMembership[]>([])
+  const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([])
+  const [userProjects, setUserProjects] = useState<Project[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [tree, setTree] = useState<ProjectTree | null>(null)
   const [route, setRoute] = useState<AppRoute>(() => parseRoute(window.location.pathname))
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
   const [authForm, setAuthForm] = useState({ email: '', password: '', name: '' })
+  const [passwordChange, setPasswordChange] = useState({ oldPassword: '', newPassword: '', confirmPassword: '' })
   const [projectModalOpen, setProjectModalOpen] = useState(false)
   const [projectDraft, setProjectDraft] = useState(emptyProjectDraft)
   const [projectEditor, setProjectEditor] = useState(emptyProjectDraft)
+  const [userEditor, setUserEditor] = useState<UserEditorState | null>(null)
+  const [generatedPassword, setGeneratedPassword] = useState('')
   const [unitEditor, setUnitEditor] = useState<UnitDraft | null>(null)
   const [aiAddModal, setAIAddModal] = useState<AIAddModalState | null>(null)
   const [detailUnitId, setDetailUnitId] = useState<string | null>(null)
@@ -355,6 +393,22 @@ export default function App() {
   const apiPageActive = route.kind === 'api' || activePage === 'api'
   const mcpPageActive = route.kind === 'mcp'
   const deletedPageActive = route.kind === 'deleted'
+  const usersPageActive = route.kind === 'users'
+  const membershipByProject = useMemo(() => Object.fromEntries(memberships.map((membership) => [membership.projectId, membership])), [memberships])
+  const selectedProjectPermissions = currentUser?.systemAdmin
+    ? {
+        viewUnits: true,
+        editUnits: true,
+        deleteUnits: true,
+        addWithAI: true,
+        viewProject: true,
+        editProject: true,
+        editProjectSettings: true,
+        projectAdmin: true,
+      }
+    : selectedProjectId
+      ? membershipByProject[selectedProjectId]?.permissions || noProjectPermissions
+      : noProjectPermissions
 
   useEffect(() => {
     if (selectedProjectId) {
@@ -439,11 +493,12 @@ export default function App() {
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      const key = event.key.toLowerCase()
+      const rawKey = typeof event.key === 'string' ? event.key : ''
+      const key = rawKey.toLowerCase()
       const primary = event.ctrlKey || event.metaKey
       const modalOpen = Boolean(projectModalOpen || unitEditor || aiAddModal || deletePreviewModal || hardDeleteModal || modalUnit || shortcutsOpen)
 
-      if (event.key === 'Escape') {
+      if (rawKey === 'Escape') {
         if (hardDeleteModal && !hardDeleteModal.loading) {
           event.preventDefault()
           setHardDeleteModal(null)
@@ -559,6 +614,9 @@ export default function App() {
     try {
       if (!pb.authStore.isValid) {
         setCurrentUser(null)
+        setMemberships([])
+        setManagedUsers([])
+        setUserProjects([])
         setProjects([])
         setTree(null)
         setDeletedItems([])
@@ -567,17 +625,33 @@ export default function App() {
 
       const me = await api.me()
       setCurrentUser(me.user)
+      setMemberships(me.memberships)
 
       const docsConfig = await api.docsConfig()
       setApiDocsConfig(docsConfig)
 
       const response = await api.projects()
       setProjects(response.projects)
-      const deleted = await api.deletedItems()
-      setDeletedItems(deleted.items)
+      if (me.user.systemAdmin) {
+        const deleted = await api.deletedItems()
+        setDeletedItems(deleted.items)
+      } else {
+        setDeletedItems([])
+      }
+      if (me.user.systemAdmin) {
+        const userResponse = await api.users()
+        setManagedUsers(userResponse.users)
+        setUserProjects(userResponse.projects)
+      } else {
+        setManagedUsers([])
+        setUserProjects([])
+      }
     } catch (err) {
       pb.authStore.clear()
       setCurrentUser(null)
+      setMemberships([])
+      setManagedUsers([])
+      setUserProjects([])
       setDeletedItems([])
       setError(err instanceof Error ? err.message : 'Failed to load session')
     } finally {
@@ -631,8 +705,8 @@ export default function App() {
     if (route.kind !== 'project' || !selectedProjectId) return null
     if (route.view === 'bugs') {
       return {
-        add: () => openNewBug(selectedProjectId),
-        addAI: apiDocsConfig.openAIConfigured ? () => void openAIAdd(selectedProjectId, 'bug') : null,
+        add: selectedProjectPermissions.editUnits ? () => openNewBug(selectedProjectId) : null,
+        addAI: apiDocsConfig.openAIConfigured && selectedProjectPermissions.addWithAI ? () => void openAIAdd(selectedProjectId, 'bug') : null,
       }
     }
     if (route.view === 'kanban' && routeContext?.currentUnit && nextChildType[routeContext.currentUnit.type]) {
@@ -644,13 +718,13 @@ export default function App() {
         }
       }
       return {
-        add: () => openNewUnit(selectedProjectId, routeContext.currentUnit!),
-        addAI: apiDocsConfig.openAIConfigured ? () => void openAIAdd(selectedProjectId, nextType as 'epic' | 'feature' | 'story' | 'bug', routeContext.currentUnit!.id) : null,
+        add: selectedProjectPermissions.editUnits ? () => openNewUnit(selectedProjectId, routeContext.currentUnit!) : null,
+        addAI: apiDocsConfig.openAIConfigured && selectedProjectPermissions.addWithAI ? () => void openAIAdd(selectedProjectId, nextType as 'epic' | 'feature' | 'story' | 'bug', routeContext.currentUnit!.id) : null,
       }
     }
     return {
-      add: () => openNewUnit(selectedProjectId),
-      addAI: apiDocsConfig.openAIConfigured ? () => void openAIAdd(selectedProjectId, 'epic') : null,
+      add: selectedProjectPermissions.editUnits ? () => openNewUnit(selectedProjectId) : null,
+      addAI: apiDocsConfig.openAIConfigured && selectedProjectPermissions.addWithAI ? () => void openAIAdd(selectedProjectId, 'epic') : null,
     }
   }
 
@@ -686,19 +760,28 @@ export default function App() {
     event.preventDefault()
     setError('')
     try {
-      if (authMode === 'register') {
-        await pb.collection('users').create({
-          email: authForm.email.trim(),
-          password: authForm.password,
-          passwordConfirm: authForm.password,
-          name: authForm.name.trim() || authForm.email.trim(),
-        })
-      }
       await pb.collection('users').authWithPassword(authForm.email.trim(), authForm.password)
       setAuthForm({ email: '', password: '', name: '' })
+      setPasswordChange({ oldPassword: '', newPassword: '', confirmPassword: '' })
       navigate('/')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Authentication failed')
+    }
+  }
+
+  async function handleForcedPasswordChange(event: Event) {
+    event.preventDefault()
+    setError('')
+    if (passwordChange.newPassword !== passwordChange.confirmPassword) {
+      setError('New password confirmation does not match.')
+      return
+    }
+    try {
+      await api.changePassword({ oldPassword: passwordChange.oldPassword, newPassword: passwordChange.newPassword })
+      setPasswordChange({ oldPassword: '', newPassword: '', confirmPassword: '' })
+      await loadSession()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to change password')
     }
   }
 
@@ -726,6 +809,27 @@ export default function App() {
       await loadProject(selectedProjectId)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update project')
+    }
+  }
+
+  async function saveUser(event: Event) {
+    event.preventDefault()
+    if (!userEditor) return
+    try {
+      if (userEditor.id) {
+        await api.updateUser(userEditor.id, userEditor)
+      } else {
+        const response = await api.createUser(userEditor)
+        setGeneratedPassword(response.temporaryPassword)
+      }
+      const response = await api.users()
+      setManagedUsers(response.users)
+      setUserProjects(response.projects)
+      if (userEditor.id) {
+        setUserEditor(null)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save user')
     }
   }
 
@@ -1036,7 +1140,9 @@ export default function App() {
           await loadProject(deletePreviewModal.target.projectId)
         }
       }
-      await loadDeletedItems()
+      if (currentUser?.systemAdmin) {
+        await loadDeletedItems()
+      }
       setDeletePreviewModal(null)
     } catch (err) {
       setDeletePreviewModal((current) => (current ? { ...current, loading: false } : current))
@@ -1190,23 +1296,10 @@ export default function App() {
 
           <form class="card border border-base-300 bg-base-100 shadow-panel" onSubmit={handleAuthSubmit}>
             <div class="card-body gap-5">
-              <div class="tabs tabs-boxed self-start">
-                <button class={`tab ${authMode === 'login' ? 'tab-active' : ''}`} type="button" onClick={() => setAuthMode('login')}>
-                  Login
-                </button>
-                <button class={`tab ${authMode === 'register' ? 'tab-active' : ''}`} type="button" onClick={() => setAuthMode('register')}>
-                  Register
-                </button>
-              </div>
-
-              {authMode === 'register' && (
-                <Field label="Name">
-                  <input class="input input-bordered w-full" value={authForm.name} onInput={(e) => setAuthForm({ ...authForm, name: (e.currentTarget as HTMLInputElement).value })} />
-                </Field>
-              )}
+              <div class="text-sm font-semibold uppercase tracking-[0.3em] text-accent">Sign in</div>
 
               <Field label="Email">
-                <input class="input input-bordered w-full" type="email" required value={authForm.email} onInput={(e) => setAuthForm({ ...authForm, email: (e.currentTarget as HTMLInputElement).value })} />
+                <input class="input input-bordered w-full" type="email" required autoFocus value={authForm.email} onInput={(e) => setAuthForm({ ...authForm, email: (e.currentTarget as HTMLInputElement).value })} />
               </Field>
 
               <Field label="Password">
@@ -1217,11 +1310,39 @@ export default function App() {
 
               <button class="btn btn-primary" type="submit">
                 <ArrowRight size={16} />
-                {authMode === 'login' ? 'Sign in' : 'Create account'}
+                Sign in
               </button>
 
-              <p class="text-sm text-base-content/80">Admin access is seeded by the backend from `ADMIN_EMAIL` and `ADMIN_PASSWORD`.</p>
+              <p class="text-sm text-base-content/80">Accounts are created by a system admin. Admin access is seeded from `ADMIN_EMAIL` and `ADMIN_PASSWORD`.</p>
             </div>
+          </form>
+        </div>
+      </div>
+    )
+  }
+
+  if (currentUser.mustChangePassword) {
+    return (
+      <div class="min-h-screen bg-[radial-gradient(circle_at_top,#1e293b,transparent_28%),linear-gradient(135deg,#0f172a,#111827)] px-4 py-8">
+        <div class="mx-auto max-w-xl rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-7 shadow-panel">
+          <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">Password update required</p>
+          <h1 class="mt-2 text-3xl font-black">Change your temporary password</h1>
+          <p class="mt-3 text-sm text-base-content/85">Your administrator created this account with a temporary password. You must set a new password before using Agilerr.</p>
+          <form class="mt-6 space-y-4" onSubmit={handleForcedPasswordChange}>
+            <Field label="Current password">
+              <input class="input input-bordered w-full" type="password" autoFocus value={passwordChange.oldPassword} onInput={(event) => setPasswordChange({ ...passwordChange, oldPassword: (event.currentTarget as HTMLInputElement).value })} />
+            </Field>
+            <Field label="New password">
+              <input class="input input-bordered w-full" type="password" value={passwordChange.newPassword} onInput={(event) => setPasswordChange({ ...passwordChange, newPassword: (event.currentTarget as HTMLInputElement).value })} />
+            </Field>
+            <Field label="Confirm new password">
+              <input class="input input-bordered w-full" type="password" value={passwordChange.confirmPassword} onInput={(event) => setPasswordChange({ ...passwordChange, confirmPassword: (event.currentTarget as HTMLInputElement).value })} />
+            </Field>
+            {error && <div class="alert alert-error py-2 text-sm">{error}</div>}
+            <button class="btn btn-primary" type="submit">
+              <SquarePen size={16} />
+              Update password
+            </button>
           </form>
         </div>
       </div>
@@ -1300,18 +1421,20 @@ export default function App() {
                       </button>
                     </li>
                   ))}
-                  <li class="mt-1 border-t border-base-300 pt-1">
-                    <button
-                      onClick={() => {
-                        setProjectMenuOpen(false)
-                        projectMenuButtonRef.current?.blur()
-                        setProjectModalOpen(true)
-                      }}
-                    >
-                      <Plus size={16} />
-                      Create new project
-                    </button>
-                  </li>
+                  {(currentUser?.createProjects || currentUser?.systemAdmin) && (
+                    <li class="mt-1 border-t border-base-300 pt-1">
+                      <button
+                        onClick={() => {
+                          setProjectMenuOpen(false)
+                          projectMenuButtonRef.current?.blur()
+                          setProjectModalOpen(true)
+                        }}
+                      >
+                        <Plus size={16} />
+                        Create new project
+                      </button>
+                    </li>
+                  )}
                 </ul>
               )}
             </div>
@@ -1321,36 +1444,36 @@ export default function App() {
             <ul class={`menu rounded-box bg-base-100/75 p-2 ${sidebarCollapsed ? 'items-center' : ''}`}>
               {selectedProjectId && (
                 <>
-                  <li>
+                  {selectedProjectPermissions.viewProject && <li>
                     <button class={`${activePage === 'dashboard' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(projectDashboardPath(selectedProjectId))} title="Dashboard" aria-label="Dashboard">
                       <House size={16} />
                       {!sidebarCollapsed && <span>Dashboard</span>}
                     </button>
-                  </li>
-                  <li class={sidebarCollapsed ? '' : 'pl-4'}>
+                  </li>}
+                  {selectedProjectPermissions.viewProject && <li class={sidebarCollapsed ? '' : 'pl-4'}>
                     <button class={`${activePage === 'kanban' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(projectKanbanPath(selectedProjectId))} title="Kanban" aria-label="Kanban">
                       <FolderKanban size={16} />
                       {!sidebarCollapsed && <span>Kanban</span>}
                     </button>
-                  </li>
-                  <li class={sidebarCollapsed ? '' : 'pl-4'}>
+                  </li>}
+                  {selectedProjectPermissions.viewProject && <li class={sidebarCollapsed ? '' : 'pl-4'}>
                     <button class={`${activePage === 'backlog' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(projectBacklogPath(selectedProjectId))} title="Backlog" aria-label="Backlog">
                       <BookOpen size={16} />
                       {!sidebarCollapsed && <span>Backlog</span>}
                     </button>
-                  </li>
-                  <li class={sidebarCollapsed ? '' : 'pl-4'}>
+                  </li>}
+                  {selectedProjectPermissions.viewProject && <li class={sidebarCollapsed ? '' : 'pl-4'}>
                     <button class={`${activePage === 'bugs' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(projectBugsPath(selectedProjectId))} title="Bugs" aria-label="Bugs">
                       <Bug size={16} />
                       {!sidebarCollapsed && <span>Bugs</span>}
                     </button>
-                  </li>
-                  <li class={sidebarCollapsed ? '' : 'pl-4'}>
+                  </li>}
+                  {(selectedProjectPermissions.editProjectSettings || selectedProjectPermissions.projectAdmin) && <li class={sidebarCollapsed ? '' : 'pl-4'}>
                     <button class={`${activePage === 'settings' ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(projectSettingsPath(selectedProjectId))} title="Settings" aria-label="Settings">
                       <Settings2 size={16} />
                       {!sidebarCollapsed && <span>Settings</span>}
                     </button>
-                  </li>
+                  </li>}
                 </>
               )}
               {!selectedProjectId && (
@@ -1376,12 +1499,22 @@ export default function App() {
                     {!sidebarCollapsed && <span>MCP</span>}
                   </button>
                 </li>
-                <li>
-                  <button class={`${deletedPageActive ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(deletedPath())} title="Deleted" aria-label="Deleted">
-                    <Trash2 size={16} />
-                    {!sidebarCollapsed && <span>Deleted</span>}
-                  </button>
-                </li>
+                {currentUser?.systemAdmin && (
+                  <li>
+                    <button class={`${usersPageActive ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(usersPath())} title="Users" aria-label="Users">
+                      <LayoutGrid size={16} />
+                      {!sidebarCollapsed && <span>Users</span>}
+                    </button>
+                  </li>
+                )}
+                {currentUser?.systemAdmin && (
+                  <li>
+                    <button class={`${deletedPageActive ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(deletedPath())} title="Deleted" aria-label="Deleted">
+                      <Trash2 size={16} />
+                      {!sidebarCollapsed && <span>Deleted</span>}
+                    </button>
+                  </li>
+                )}
               </ul>
             </div>
           </nav>
@@ -1412,6 +1545,7 @@ export default function App() {
               onCreate={() => setProjectModalOpen(true)}
               onCreateAI={() => void openProjectDraftAI()}
               openAIConfigured={apiDocsConfig.openAIConfigured}
+              canCreate={currentUser.createProjects || currentUser.systemAdmin}
               onOpen={(projectId) => navigate(projectDashboardPath(projectId))}
             />
           )}
@@ -1439,6 +1573,36 @@ export default function App() {
 
           {route.kind === 'mcp' && <MCPDocsPage docsConfig={apiDocsConfig} />}
 
+          {route.kind === 'users' && currentUser.systemAdmin && (
+            <UsersPage
+              users={managedUsers}
+              projects={userProjects}
+              generatedPassword={generatedPassword}
+              onCreate={() => {
+                setGeneratedPassword('')
+                setUserEditor({ ...emptyUserEditor })
+              }}
+              onEdit={(managedUser) => {
+                setGeneratedPassword('')
+                setUserEditor({
+                  id: managedUser.user.id,
+                  email: managedUser.user.email,
+                  name: managedUser.user.name,
+                  systemAdmin: managedUser.user.systemAdmin,
+                  createProjects: managedUser.user.createProjects,
+                  memberships: managedUser.memberships.map((membership) => ({
+                    projectId: membership.projectId,
+                    permissions: membership.permissions,
+                  })),
+                })
+              }}
+              onResetPassword={async (userId) => {
+                const response = await api.resetUserPassword(userId)
+                setGeneratedPassword(response.temporaryPassword)
+              }}
+            />
+          )}
+
           {route.kind === 'deleted' && (
             <DeletedPage
               items={deletedItems}
@@ -1460,7 +1624,7 @@ export default function App() {
             <>
               {route.view === 'backlog' && (
                 <>
-                  <ProjectHero project={tree.project} tags={tree.tags} onEdit={() => navigate(projectSettingsPath(tree.project.id))} onAddPrimary={() => openNewUnit(tree.project.id)} onAddAI={() => void openAIAdd(tree.project.id, 'epic')} openAIConfigured={apiDocsConfig.openAIConfigured} addLabel="Add epic" addTitle="Add epic" aiTitle="AI Add epics" aiTargetType="epic" />
+                  <ProjectHero project={tree.project} tags={tree.tags} onEdit={() => navigate(projectSettingsPath(tree.project.id))} onAddPrimary={() => openNewUnit(tree.project.id)} onAddAI={() => void openAIAdd(tree.project.id, 'epic')} openAIConfigured={apiDocsConfig.openAIConfigured} addLabel="Add epic" addTitle="Add epic" aiTitle="AI Add epics" aiTargetType="epic" canEdit={selectedProjectPermissions.editProjectSettings || selectedProjectPermissions.projectAdmin} canAdd={selectedProjectPermissions.editUnits} canAddAI={selectedProjectPermissions.addWithAI} />
                   <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-4 shadow-panel">
                     <div class="mb-4 flex items-center justify-between">
                       <h2 class="text-lg font-bold">Backlog</h2>
@@ -1531,6 +1695,9 @@ export default function App() {
                             }
                           }}
                           openAIConfigured={apiDocsConfig.openAIConfigured}
+                          canEdit={selectedProjectPermissions.editUnits}
+                          canCreateChild={selectedProjectPermissions.editUnits}
+                          canCreateAIChild={selectedProjectPermissions.addWithAI}
                         />
                       ))}
                       {!backlogNodes.length && <div class="rounded-xl border border-dashed border-base-300 p-3 text-xs text-base-content/80">No items match the current filter.</div>}
@@ -1552,6 +1719,9 @@ export default function App() {
                     onAddPrimary={() => openNewUnit(tree.project.id)}
                     onAddAI={() => void openAIAdd(tree.project.id, 'epic')}
                     openAIConfigured={apiDocsConfig.openAIConfigured}
+                    canEditProject={selectedProjectPermissions.editProjectSettings || selectedProjectPermissions.projectAdmin}
+                    canAdd={selectedProjectPermissions.editUnits}
+                    canAddAI={selectedProjectPermissions.addWithAI}
                     onToggleAssignedFilter={() => {
                     setAssignedFilterOpen((current) => !current)
                     assignedFilterButtonRef.current?.blur()
@@ -1574,13 +1744,17 @@ export default function App() {
                   onAddBug={() => openNewBug(tree.project.id)}
                   onAddAIBug={() => void openAIAdd(tree.project.id, 'bug')}
                   openAIConfigured={apiDocsConfig.openAIConfigured}
+                  canEditProject={selectedProjectPermissions.editProjectSettings || selectedProjectPermissions.projectAdmin}
+                  canAddBug={selectedProjectPermissions.editUnits}
+                  canAddAIBug={selectedProjectPermissions.addWithAI}
                   onOpenDetails={openUnitDetails}
                   onEditBug={openEditUnit}
+                  canEditBug={selectedProjectPermissions.editUnits}
                   onMoveBug={(unitId, status) => void moveUnit(unitId, status)}
                 />
               )}
 
-              {route.view === 'settings' && (
+              {route.view === 'settings' && (selectedProjectPermissions.editProjectSettings || selectedProjectPermissions.projectAdmin) && (
                 <ProjectSettingsPage
                   draft={projectEditor}
                   suggestions={tree.tags}
@@ -1627,6 +1801,13 @@ export default function App() {
                         }
                       }}
                       onMoveUnit={(unitId, status) => void moveUnit(unitId, status)}
+                      canEditProject={selectedProjectPermissions.editProjectSettings || selectedProjectPermissions.projectAdmin}
+                      canAddEpic={selectedProjectPermissions.editUnits}
+                      canAddAIEpic={selectedProjectPermissions.addWithAI}
+                      canEditUnit={selectedProjectPermissions.editUnits}
+                      canDeleteUnit={selectedProjectPermissions.deleteUnits}
+                      canCreateChild={selectedProjectPermissions.editUnits}
+                      canCreateAIChild={selectedProjectPermissions.addWithAI}
                       onSaveComment={(event, unitId) => void saveComment(event, unitId)}
                       commentBody={commentBody}
                       commentMentions={commentMentions}
@@ -1791,6 +1972,95 @@ export default function App() {
         </Modal>
       )}
 
+      {userEditor && (
+        <Modal title={userEditor.id ? 'Edit user' : 'Create user'} onClose={() => setUserEditor(null)} wide>
+          <form class="space-y-5" onSubmit={saveUser}>
+            <div class="grid gap-6 lg:grid-cols-[0.8fr,1.2fr]">
+              <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
+                <h3 class="text-lg font-bold">User</h3>
+                <Field label="Name">
+                  <input class="input input-bordered w-full" autoFocus value={userEditor.name} onInput={(event) => setUserEditor({ ...userEditor, name: (event.currentTarget as HTMLInputElement).value })} />
+                </Field>
+                <Field label="Email">
+                  <input class="input input-bordered w-full" type="email" value={userEditor.email} onInput={(event) => setUserEditor({ ...userEditor, email: (event.currentTarget as HTMLInputElement).value })} />
+                </Field>
+                <label class="flex items-center gap-3 rounded-xl border border-base-300 bg-base-100 p-3 text-sm">
+                  <input type="checkbox" class="checkbox checkbox-sm" checked={userEditor.createProjects} onChange={(event) => setUserEditor({ ...userEditor, createProjects: (event.currentTarget as HTMLInputElement).checked })} />
+                  <span>Create projects</span>
+                </label>
+                <label class="flex items-center gap-3 rounded-xl border border-base-300 bg-base-100 p-3 text-sm">
+                  <input type="checkbox" class="checkbox checkbox-sm" checked={userEditor.systemAdmin} onChange={(event) => setUserEditor({ ...userEditor, systemAdmin: (event.currentTarget as HTMLInputElement).checked })} />
+                  <span>System admin</span>
+                </label>
+                {generatedPassword && (
+                  <div class="rounded-xl border border-primary/30 bg-primary/5 p-4">
+                    <div class="text-sm font-semibold">Temporary password</div>
+                    <div class="mt-2 flex items-center gap-2">
+                      <code class="flex-1 rounded bg-base-200 px-3 py-2 text-sm">{generatedPassword}</code>
+                      <button class="btn btn-outline btn-sm" type="button" onClick={() => void navigator.clipboard.writeText(generatedPassword)}>
+                        <Copy size={14} />
+                        Copy
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </section>
+              <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
+                <h3 class="text-lg font-bold">Projects</h3>
+                <div class="max-h-[32rem] space-y-4 overflow-y-auto pr-1">
+                  {userProjects.map((project) => {
+                    const membership = userEditor.memberships.find((item) => item.projectId === project.id)
+                    const permissions = membership?.permissions || {
+                      viewUnits: true,
+                      editUnits: true,
+                      deleteUnits: true,
+                      addWithAI: true,
+                      viewProject: true,
+                      editProject: true,
+                      editProjectSettings: true,
+                      projectAdmin: true,
+                    }
+                    return (
+                      <ProjectMembershipEditor
+                        key={project.id}
+                        project={project}
+                        active={Boolean(membership)}
+                        permissions={permissions}
+                        onToggleActive={(active) =>
+                          setUserEditor({
+                            ...userEditor,
+                            memberships: active
+                              ? [...userEditor.memberships, { projectId: project.id, permissions }]
+                              : userEditor.memberships.filter((item) => item.projectId !== project.id),
+                          })
+                        }
+                        onChange={(nextPermissions) =>
+                          setUserEditor({
+                            ...userEditor,
+                            memberships: userEditor.memberships.some((item) => item.projectId === project.id)
+                              ? userEditor.memberships.map((item) => (item.projectId === project.id ? { ...item, permissions: nextPermissions } : item))
+                              : [...userEditor.memberships, { projectId: project.id, permissions: nextPermissions }],
+                          })
+                        }
+                      />
+                    )
+                  })}
+                </div>
+              </section>
+            </div>
+            <div class="flex justify-end gap-2">
+              <button class="btn btn-ghost" type="button" onClick={() => setUserEditor(null)}>
+                Cancel
+              </button>
+              <button class="btn btn-primary" type="submit">
+                <SquarePen size={16} />
+                Save user
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
       {aiAddModal && (
         <Modal title={aiAddModal.context.title} onClose={() => setAIAddModal(null)} wide>
           <AIAddModalContent
@@ -1925,15 +2195,16 @@ export default function App() {
             onCommentBodyChange={setCommentBody}
             onInsertCommentMention={(mention) => insertMention('comment', mention)}
             onSaveComment={(event) => void saveComment(event, modalUnit.id)}
-            onEdit={() => openEditUnit(modalUnit)}
-            onDelete={() => void openDeleteUnit(modalUnit.id)}
-            onCreateChild={nextChildType[modalUnit.type] ? () => openNewUnit(modalUnit.projectId, modalUnit) : undefined}
+            onEdit={selectedProjectPermissions.editUnits ? () => openEditUnit(modalUnit) : undefined}
+            onDelete={selectedProjectPermissions.deleteUnits ? () => void openDeleteUnit(modalUnit.id) : undefined}
+            onCreateChild={selectedProjectPermissions.editUnits && nextChildType[modalUnit.type] ? () => openNewUnit(modalUnit.projectId, modalUnit) : undefined}
             onCreateAIChild={
-              nextChildType[modalUnit.type] && canAIAddType(nextChildType[modalUnit.type] as string)
+              selectedProjectPermissions.addWithAI && nextChildType[modalUnit.type] && canAIAddType(nextChildType[modalUnit.type] as string)
                 ? () => void openAIAdd(modalUnit.projectId, nextChildType[modalUnit.type] as 'feature' | 'story' | 'bug' | 'epic', modalUnit.id)
                 : undefined
             }
             openAIConfigured={apiDocsConfig.openAIConfigured}
+            canComment={selectedProjectPermissions.editUnits}
           />
         </Modal>
       )}
@@ -1941,7 +2212,7 @@ export default function App() {
   )
 }
 
-function ProjectDirectory(props: { projects: Project[]; onCreate: () => void; onCreateAI: () => void; openAIConfigured: boolean; onOpen: (projectId: string) => void }) {
+function ProjectDirectory(props: { projects: Project[]; onCreate: () => void; onCreateAI: () => void; openAIConfigured: boolean; onOpen: (projectId: string) => void; canCreate: boolean }) {
   return (
     <section class="space-y-5">
       <header class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
@@ -1951,14 +2222,14 @@ function ProjectDirectory(props: { projects: Project[]; onCreate: () => void; on
             <h2 class="mt-2 text-2xl font-black">Choose a workspace</h2>
             <p class="mt-2 max-w-2xl text-sm text-base-content/85">Select a project to open its dashboard, or create a new one from here.</p>
           </div>
-          <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={props.onCreate} title="Create project" aria-label="Create project">
+          {props.canCreate && <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={props.onCreate} title="Create project" aria-label="Create project">
             <Plus size={16} />
             <span class="sr-only">Create project</span>
-          </button>
-          <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={props.onCreateAI} title={aiDisabledReason('project', props.openAIConfigured)} aria-label="AI Add project" disabled={!props.openAIConfigured}>
+          </button>}
+          {props.canCreate && <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={props.onCreateAI} title={aiDisabledReason('project', props.openAIConfigured)} aria-label="AI Add project" disabled={!props.openAIConfigured}>
             <Sparkles size={16} />
             <span class="sr-only">AI Add project</span>
-          </button>
+          </button>}
         </div>
       </header>
 
@@ -2041,7 +2312,116 @@ function DeletedPage(props: {
   )
 }
 
-function ProjectHero(props: { project: Project; tags: string[]; onEdit: () => void; onAddPrimary: () => void; onAddAI: () => void; openAIConfigured: boolean; addLabel: string; addTitle: string; aiTitle: string; aiTargetType: string }) {
+function UsersPage(props: {
+  users: ManagedUser[]
+  projects: Project[]
+  generatedPassword: string
+  onCreate: () => void
+  onEdit: (user: ManagedUser) => void
+  onResetPassword: (userId: string) => void
+}) {
+  return (
+    <section class="space-y-5">
+      <header class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">Users</p>
+            <h1 class="mt-2 text-2xl font-black">System users</h1>
+            <p class="mt-2 text-sm text-base-content/85">Create users, assign project memberships, and reset temporary passwords.</p>
+          </div>
+          <button class="btn btn-primary btn-sm" onClick={props.onCreate}>
+            <Plus size={16} />
+            New user
+          </button>
+        </div>
+      </header>
+	      <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+	        <div class="space-y-3">
+	          {props.users.map((managedUser) => (
+	            (() => {
+	              const memberships = managedUser.memberships ?? []
+	              return (
+	            <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-base-300 bg-base-100 p-4">
+	              <div class="min-w-0">
+	                <div class="font-semibold">{managedUser.user.name}</div>
+	                <div class="text-sm text-base-content/80">{managedUser.user.email}</div>
+	                <div class="mt-2 flex flex-wrap gap-2">
+	                  {managedUser.user.systemAdmin && <span class="badge badge-primary">System admin</span>}
+	                  {managedUser.user.createProjects && <span class="badge badge-outline border-base-content/40 text-base-content">Create projects</span>}
+	                  {managedUser.user.mustChangePassword && <span class="badge badge-warning">Password update required</span>}
+	                  <span class="badge badge-outline border-base-content/40 text-base-content">{memberships.length} projects</span>
+	                </div>
+	              </div>
+	              <div class="flex gap-2">
+	                <button class="btn btn-outline btn-sm" onClick={() => void props.onResetPassword(managedUser.user.id)}>
+	                  Reset password
+                </button>
+                <button class="btn btn-primary btn-sm" onClick={() => props.onEdit(managedUser)}>
+                  <Pencil size={14} />
+	                  Edit
+	                </button>
+	              </div>
+	            </div>
+	              )
+	            })()
+	          ))}
+          {!props.users.length && <div class="rounded-xl border border-dashed border-base-300 p-4 text-sm text-base-content/80">No users yet.</div>}
+        </div>
+      </section>
+    </section>
+  )
+}
+
+function ProjectMembershipEditor(props: {
+  project: Project
+  active: boolean
+  permissions: ProjectPermissions
+  onToggleActive: (active: boolean) => void
+  onChange: (permissions: ProjectPermissions) => void
+}) {
+  const permissions = props.permissions
+  const setPermission = (patch: Partial<ProjectPermissions>) => props.onChange({ ...permissions, ...patch })
+  return (
+    <div class="rounded-xl border border-base-300 bg-base-100 p-4">
+      <label class="flex items-center justify-between gap-3">
+        <span class="font-semibold">{props.project.name}</span>
+        <input type="checkbox" class="toggle toggle-primary" checked={props.active} onChange={(event) => props.onToggleActive((event.currentTarget as HTMLInputElement).checked)} />
+      </label>
+      {props.active && (
+        <div class="mt-4 grid gap-2 sm:grid-cols-2">
+          <PermissionCheckbox label="View project" checked={permissions.viewProject} onChange={(checked) => setPermission({ viewProject: checked })} />
+          <PermissionCheckbox label="View items" checked={permissions.viewUnits} onChange={(checked) => setPermission({ viewUnits: checked })} />
+          <PermissionCheckbox label="Edit items" checked={permissions.editUnits} onChange={(checked) => setPermission({ editUnits: checked })} />
+          <PermissionCheckbox label="Delete items" checked={permissions.deleteUnits} onChange={(checked) => setPermission({ deleteUnits: checked })} />
+          <PermissionCheckbox label="Add with AI" checked={permissions.addWithAI} onChange={(checked) => setPermission({ addWithAI: checked })} />
+          <PermissionCheckbox label="Edit project" checked={permissions.editProject} onChange={(checked) => setPermission({ editProject: checked })} />
+          <PermissionCheckbox label="Edit settings" checked={permissions.editProjectSettings} onChange={(checked) => setPermission({ editProjectSettings: checked })} />
+          <PermissionCheckbox label="Project admin" checked={permissions.projectAdmin} onChange={(checked) => setPermission(checked ? {
+            projectAdmin: true,
+            viewProject: true,
+            viewUnits: true,
+            editUnits: true,
+            deleteUnits: true,
+            addWithAI: true,
+            editProject: true,
+            editProjectSettings: true,
+          } : { projectAdmin: false })} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PermissionCheckbox(props: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <label class="flex items-center gap-3 rounded-lg border border-base-300 bg-base-100 px-3 py-2 text-sm">
+      <input type="checkbox" class="checkbox checkbox-sm" checked={props.checked} onChange={(event) => props.onChange((event.currentTarget as HTMLInputElement).checked)} />
+      <span>{props.label}</span>
+    </label>
+  )
+}
+
+function ProjectHero(props: { project: Project; tags: string[]; onEdit: () => void; onAddPrimary: () => void; onAddAI: () => void; openAIConfigured: boolean; addLabel: string; addTitle: string; aiTitle: string; aiTargetType: string; canEdit?: boolean; canAdd?: boolean; canAddAI?: boolean }) {
   return (
     <header class="mb-5 rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
       <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -2058,18 +2438,24 @@ function ProjectHero(props: { project: Project; tags: string[]; onEdit: () => vo
           </div>
         </div>
         <div class="flex flex-wrap gap-2">
-          <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={props.onEdit} title="Edit project" aria-label="Edit project">
-            <Pencil size={16} />
-            <span class="sr-only">Edit project</span>
-          </button>
-          <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={props.onAddAI} title={aiDisabledReason(props.aiTargetType, props.openAIConfigured) || props.aiTitle} aria-label={props.aiTitle} disabled={!props.openAIConfigured || !canAIAddType(props.aiTargetType)}>
-            <Sparkles size={16} />
-            <span class="sr-only">{props.aiTitle}</span>
-          </button>
-          <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={props.onAddPrimary} title={props.addTitle} aria-label={props.addTitle}>
-            <Plus size={16} />
-            <span class="sr-only">{props.addLabel}</span>
-          </button>
+          {(props.canEdit ?? true) && (
+            <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={props.onEdit} title="Edit project" aria-label="Edit project">
+              <Pencil size={16} />
+              <span class="sr-only">Edit project</span>
+            </button>
+          )}
+          {(props.canAddAI ?? true) && (
+            <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={props.onAddAI} title={aiDisabledReason(props.aiTargetType, props.openAIConfigured) || props.aiTitle} aria-label={props.aiTitle} disabled={!props.openAIConfigured || !canAIAddType(props.aiTargetType)}>
+              <Sparkles size={16} />
+              <span class="sr-only">{props.aiTitle}</span>
+            </button>
+          )}
+          {(props.canAdd ?? true) && (
+            <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={props.onAddPrimary} title={props.addTitle} aria-label={props.addTitle}>
+              <Plus size={16} />
+              <span class="sr-only">{props.addLabel}</span>
+            </button>
+          )}
         </div>
       </div>
     </header>
@@ -2088,6 +2474,9 @@ function ProjectDashboardPage(props: {
   onAddPrimary: () => void
   onAddAI: () => void
   openAIConfigured: boolean
+  canEditProject: boolean
+  canAdd: boolean
+  canAddAI: boolean
   onToggleAssignedFilter: () => void
   onAssignedTypesChange: (types: UnitType[]) => void
   assignedFilterRef: { current: HTMLDivElement | null }
@@ -2115,7 +2504,7 @@ function ProjectDashboardPage(props: {
 
   return (
     <section class="space-y-5">
-      <ProjectHero project={props.project} tags={props.project.tags} onEdit={props.onEditProject} onAddPrimary={props.onAddPrimary} onAddAI={props.onAddAI} openAIConfigured={props.openAIConfigured} addLabel="Add epic" addTitle="Add epic" aiTitle="AI Add epics" aiTargetType="epic" />
+      <ProjectHero project={props.project} tags={props.project.tags} onEdit={props.onEditProject} onAddPrimary={props.onAddPrimary} onAddAI={props.onAddAI} openAIConfigured={props.openAIConfigured} addLabel="Add epic" addTitle="Add epic" aiTitle="AI Add epics" aiTargetType="epic" canEdit={props.canEditProject} canAdd={props.canAdd} canAddAI={props.canAddAI} />
 
       <section class="grid gap-4 xl:grid-cols-[1.1fr,0.9fr]">
         <div class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
@@ -2425,13 +2814,17 @@ function BugsPage(props: {
   onAddBug: () => void
   onAddAIBug: () => void
   openAIConfigured: boolean
+  canEditProject: boolean
+  canAddBug: boolean
+  canAddAIBug: boolean
   onOpenDetails: (unit: Unit) => void
   onEditBug: (unit: Unit) => void
+  canEditBug: boolean
   onMoveBug: (unitId: string, status: UnitStatus) => void
 }) {
   return (
     <section class="space-y-5">
-      <ProjectHero project={props.project} tags={props.project.tags} onEdit={props.onEditProject} onAddPrimary={props.onAddBug} onAddAI={props.onAddAIBug} openAIConfigured={props.openAIConfigured} addLabel="Add bug" addTitle="Add bug" aiTitle="AI Add bugs" aiTargetType="bug" />
+      <ProjectHero project={props.project} tags={props.project.tags} onEdit={props.onEditProject} onAddPrimary={props.onAddBug} onAddAI={props.onAddAIBug} openAIConfigured={props.openAIConfigured} addLabel="Add bug" addTitle="Add bug" aiTitle="AI Add bugs" aiTargetType="bug" canEdit={props.canEditProject} canAdd={props.canAddBug} canAddAI={props.canAddAIBug} />
       <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-4 shadow-panel">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -2451,7 +2844,7 @@ function BugsPage(props: {
         </div>
 
         {props.bugsView === 'list' ? (
-          <BugList project={props.project} bugs={props.bugs} commentsByUnit={props.commentsByUnit} userById={props.userById} onOpenDetails={props.onOpenDetails} onEditBug={props.onEditBug} />
+          <BugList project={props.project} bugs={props.bugs} commentsByUnit={props.commentsByUnit} userById={props.userById} onOpenDetails={props.onOpenDetails} onEditBug={props.onEditBug} canEditBug={props.canEditBug} />
         ) : (
           <KanbanBoard
             project={props.project}
@@ -2477,6 +2870,7 @@ function BugList(props: {
   userById: Record<string, User>
   onOpenDetails: (unit: Unit) => void
   onEditBug: (unit: Unit) => void
+  canEditBug: boolean
 }) {
   const sorted = [...props.bugs].sort((a, b) => bugPriorityRank(a.priority) - bugPriorityRank(b.priority) || a.position - b.position)
   return (
@@ -2496,9 +2890,11 @@ function BugList(props: {
               </button>
               <div class="mt-1.5 text-xs text-base-content/90">{plainText(bug.description) || 'No description yet.'}</div>
             </div>
-            <button class="btn btn-outline btn-xs" onClick={() => props.onEditBug(bug)} title="Edit bug" aria-label="Edit bug">
-              <Pencil size={14} />
-            </button>
+            {props.canEditBug && (
+              <button class="btn btn-outline btn-xs" onClick={() => props.onEditBug(bug)} title="Edit bug" aria-label="Edit bug">
+                <Pencil size={14} />
+              </button>
+            )}
           </div>
           <div class="mt-3 flex flex-wrap gap-2">
             <span class="badge badge-outline border-base-content/40 text-base-content">{props.commentsByUnit.get(bug.id)?.length || 0} comments</span>
@@ -2526,12 +2922,19 @@ function KanbanRoutePage(props: {
   onAddEpic: () => void
   onAddAIEpic: () => void
   openAIConfigured: boolean
+  canEditProject: boolean
+  canAddEpic: boolean
+  canAddAIEpic: boolean
   onOpenRoute: (unit: Unit) => void
   onOpenDetails: (unit: Unit) => void
   onEditUnit: (unit: Unit) => void
   onDeleteUnit: (unit: Unit) => void
   onCreateChild: (unit: Unit) => void
   onCreateAIChild: (unit: Unit) => void
+  canEditUnit: boolean
+  canDeleteUnit: boolean
+  canCreateChild: boolean
+  canCreateAIChild: boolean
   onMoveUnit: (unitId: string, status: UnitStatus) => void
   onSaveComment: (event: Event, unitId: string) => void
   commentBody: string
@@ -2561,21 +2964,21 @@ function KanbanRoutePage(props: {
                 </div>
               </div>
               <div class="flex flex-wrap gap-2">
-                <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={() => props.onEditUnit(currentUnit)} title={`Edit ${typeLabels[currentUnit.type]}`} aria-label={`Edit ${typeLabels[currentUnit.type]}`}>
+                {props.canEditUnit && <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={() => props.onEditUnit(currentUnit)} title={`Edit ${typeLabels[currentUnit.type]}`} aria-label={`Edit ${typeLabels[currentUnit.type]}`}>
                   <Pencil size={16} />
                   <span class="sr-only">{`Edit ${typeLabels[currentUnit.type]}`}</span>
-                </button>
-                <button class="btn btn-error btn-outline btn-sm h-9 min-h-9" onClick={() => props.onDeleteUnit(currentUnit)} title={`Delete ${typeLabels[currentUnit.type]}`} aria-label={`Delete ${typeLabels[currentUnit.type]}`}>
+                </button>}
+                {props.canDeleteUnit && <button class="btn btn-error btn-outline btn-sm h-9 min-h-9" onClick={() => props.onDeleteUnit(currentUnit)} title={`Delete ${typeLabels[currentUnit.type]}`} aria-label={`Delete ${typeLabels[currentUnit.type]}`}>
                   <Trash2 size={16} />
                   <span class="sr-only">{`Delete ${typeLabels[currentUnit.type]}`}</span>
-                </button>
-                {nextChildType[currentUnit.type] && (
+                </button>}
+                {nextChildType[currentUnit.type] && props.canCreateAIChild && (
                   <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={() => props.onCreateAIChild(currentUnit)} title={aiDisabledReason(nextChildType[currentUnit.type] as string, props.openAIConfigured) || `AI Add ${typeLabels[nextChildType[currentUnit.type] as UnitType]}`} aria-label={`AI Add ${typeLabels[nextChildType[currentUnit.type] as UnitType]}`} disabled={!props.openAIConfigured || !canAIAddType(nextChildType[currentUnit.type] as string)}>
                     <Sparkles size={16} />
                     <span class="sr-only">{`AI Add ${typeLabels[nextChildType[currentUnit.type] as UnitType]}`}</span>
                   </button>
                 )}
-                {nextChildType[currentUnit.type] && (
+                {nextChildType[currentUnit.type] && props.canCreateChild && (
                   <button class="btn btn-primary btn-sm h-9 min-h-9" onClick={() => props.onCreateChild(currentUnit)} title={`Add ${typeLabels[nextChildType[currentUnit.type] as UnitType]}`} aria-label={`Add ${typeLabels[nextChildType[currentUnit.type] as UnitType]}`}>
                     <Plus size={16} />
                     <span class="sr-only">{`Add ${typeLabels[nextChildType[currentUnit.type] as UnitType]}`}</span>
@@ -2602,7 +3005,7 @@ function KanbanRoutePage(props: {
           </section>
         </>
       ) : (
-        <ProjectHero project={props.project} tags={props.allTags} onEdit={props.onEditProject} onAddPrimary={props.onAddEpic} onAddAI={props.onAddAIEpic} openAIConfigured={props.openAIConfigured} addLabel="Add epic" addTitle="Add epic" aiTitle="AI Add epics" aiTargetType="epic" />
+        <ProjectHero project={props.project} tags={props.allTags} onEdit={props.onEditProject} onAddPrimary={props.onAddEpic} onAddAI={props.onAddAIEpic} openAIConfigured={props.openAIConfigured} addLabel="Add epic" addTitle="Add epic" aiTitle="AI Add epics" aiTargetType="epic" canEdit={props.canEditProject} canAdd={props.canAddEpic} canAddAI={props.canAddAIEpic} />
       )}
 
       {!taskUnit && (
@@ -2629,6 +3032,7 @@ function KanbanRoutePage(props: {
             onCommentBodyChange={props.onCommentBodyChange}
             onInsertCommentMention={props.onInsertCommentMention}
             onSaveComment={(event) => props.onSaveComment(event, currentUnit.id)}
+            canComment={props.canEditUnit}
           />
         </section>
       )}
@@ -2732,6 +3136,7 @@ function UnitDetailContent(props: {
   onCreateChild?: () => void
   onCreateAIChild?: () => void
   openAIConfigured?: boolean
+  canComment?: boolean
   hideActions?: boolean
   hideComments?: boolean
 }) {
@@ -2789,6 +3194,7 @@ function UnitDetailContent(props: {
           onCommentBodyChange={props.onCommentBodyChange}
           onInsertCommentMention={props.onInsertCommentMention}
           onSaveComment={props.onSaveComment}
+          canComment={props.canComment ?? true}
         />
       )}
     </div>
@@ -2803,6 +3209,7 @@ function UnitCommentsSection(props: {
   onCommentBodyChange: (value: string) => void
   onInsertCommentMention: (mention: Mention) => void
   onSaveComment: (event: Event) => void
+  canComment: boolean
 }) {
   return (
     <div class="space-y-5">
@@ -2825,7 +3232,7 @@ function UnitCommentsSection(props: {
         </div>
       </section>
 
-      <form
+      {props.canComment && <form
         class="space-y-4 rounded-2xl border border-base-300 bg-base-200/60 p-4"
         onSubmit={props.onSaveComment}
         onKeyDown={(event) => {
@@ -2846,7 +3253,7 @@ function UnitCommentsSection(props: {
           Save comment
         </button>
         <div class="text-xs text-base-content/70">Press `Ctrl+Enter` to save.</div>
-      </form>
+      </form>}
     </div>
   )
 }
@@ -3283,6 +3690,9 @@ function UnitTreeNode(props: {
   onCreateChild: (unit: Unit) => void
   onCreateAIChild: (unit: Unit) => void
   openAIConfigured: boolean
+  canEdit: boolean
+  canCreateChild: boolean
+  canCreateAIChild: boolean
 }) {
   const { node } = props
   const { unit, implicit, children } = node
@@ -3319,15 +3729,15 @@ function UnitTreeNode(props: {
         </div>
         {!implicit && (
           <div class="flex gap-2">
-            <button class="btn btn-outline btn-xs" onClick={() => props.onEdit(unit)} title="Edit item" aria-label="Edit item">
+            {props.canEdit && <button class="btn btn-outline btn-xs" onClick={() => props.onEdit(unit)} title="Edit item" aria-label="Edit item">
               <Pencil size={14} />
-            </button>
-            {nextChildType[unit.type] && (
+            </button>}
+            {nextChildType[unit.type] && props.canCreateAIChild && (
               <button class="btn btn-outline btn-xs" onClick={() => props.onCreateAIChild(unit)} title={aiDisabledReason(nextChildType[unit.type] as string, props.openAIConfigured) || 'AI Add child'} aria-label="AI Add child" disabled={!props.openAIConfigured || !canAIAddType(nextChildType[unit.type] as string)}>
                 <Sparkles size={14} />
               </button>
             )}
-            {nextChildType[unit.type] && (
+            {nextChildType[unit.type] && props.canCreateChild && (
               <button class="btn btn-primary btn-xs" onClick={() => props.onCreateChild(unit)} title="Add child" aria-label="Add child">
                 <Plus size={14} />
               </button>
@@ -3347,7 +3757,7 @@ function UnitTreeNode(props: {
       {!!children.length && (
         <div class="mt-4 space-y-3 border-l-2 border-base-300 pl-4">
           {children.map((child) => (
-            <UnitTreeNode project={props.project} node={child} userById={props.userById} commentsByUnit={props.commentsByUnit} onOpenRoute={props.onOpenRoute} onOpenDetails={props.onOpenDetails} onEdit={props.onEdit} onCreateChild={props.onCreateChild} onCreateAIChild={props.onCreateAIChild} openAIConfigured={props.openAIConfigured} />
+            <UnitTreeNode project={props.project} node={child} userById={props.userById} commentsByUnit={props.commentsByUnit} onOpenRoute={props.onOpenRoute} onOpenDetails={props.onOpenDetails} onEdit={props.onEdit} onCreateChild={props.onCreateChild} onCreateAIChild={props.onCreateAIChild} openAIConfigured={props.openAIConfigured} canEdit={props.canEdit} canCreateChild={props.canCreateChild} canCreateAIChild={props.canCreateAIChild} />
           ))}
         </div>
       )}
@@ -3814,6 +4224,7 @@ function parseRoute(pathname: string): AppRoute {
 
   if (!segments.length) return { kind: 'root' }
   if (segments[0] === 'api' && segments.length === 1) return { kind: 'api' }
+  if (segments[0] === 'users' && segments.length === 1) return { kind: 'users' }
   if (segments[0] === 'deleted' && segments.length === 1) return { kind: 'deleted' }
   if (segments[0] === 'mcp' && segments.length === 1) return { kind: 'mcp' }
   if (segments[0] !== 'projects' || !segments[1]) return { kind: 'root' }
@@ -3897,6 +4308,10 @@ function projectBacklogPath(projectId: string) {
 
 function apiPath() {
   return '/api'
+}
+
+function usersPath() {
+  return '/users'
 }
 
 function deletedPath() {

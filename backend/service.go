@@ -60,6 +60,9 @@ func (s *AgilerrService) EnsureAdmin() error {
 	adminUser.SetEmail(s.config.AdminEmail)
 	adminUser.SetPassword(s.config.AdminPassword)
 	adminUser.Set("name", "Administrator")
+	adminUser.Set("isSystemAdmin", true)
+	adminUser.Set("createProjects", true)
+	adminUser.Set("mustChangePassword", false)
 
 	return s.app.Save(adminUser)
 }
@@ -94,6 +97,9 @@ func (s *AgilerrService) EnsureDemoData() error {
 		return err
 	}
 	projectRecord = projectRecord.Fresh()
+	if err := s.upsertMembership(adminUser.Id, projectRecord.Id, normalizeProjectPermissions(map[string]bool{"project_admin": true})); err != nil {
+		return err
+	}
 
 	unitsCollection, err := s.app.FindCollectionByNameOrId(collectionUnits)
 	if err != nil {
@@ -146,7 +152,12 @@ func (s *AgilerrService) RegisterRoutes(e *core.ServeEvent) {
 	s.RegisterMCPRoutes(e)
 
 	group.GET("/me", s.handleMe)
+	group.POST("/me/password", s.handleChangePassword)
 	group.GET("/docs-config", s.handleDocsConfig)
+	group.GET("/users", s.handleUsersList)
+	group.POST("/users", s.handleUserCreate)
+	group.PATCH("/users/{userId}", s.handleUserUpdate)
+	group.POST("/users/{userId}/reset-password", s.handleUserResetPassword)
 	group.GET("/projects", s.handleProjectsList)
 	group.POST("/projects", s.handleProjectCreate)
 	group.GET("/projects/{projectId}/delete-preview", s.handleProjectDeletePreview)
@@ -190,6 +201,12 @@ func (s *AgilerrService) requireAPIAccess(e *core.RequestEvent) error {
 	if e.Auth.Collection().Name != collectionUsers {
 		return e.ForbiddenError("The authorized record is not allowed to perform this action.", nil)
 	}
+	if e.Auth.GetBool("mustChangePassword") {
+		path := e.Request.URL.Path
+		if path != "/api/agilerr/me" && path != "/api/agilerr/me/password" && path != "/api/agilerr/docs-config" {
+			return e.ForbiddenError("Password change is required before continuing.", nil)
+		}
+	}
 	return e.Next()
 }
 
@@ -201,9 +218,117 @@ func (s *AgilerrService) findAPIActor() (*core.Record, error) {
 	return s.app.FindAuthRecordByEmail(users, s.config.AdminEmail)
 }
 
+func (s *AgilerrService) isSystemAdmin(user *core.Record) bool {
+	return user != nil && user.GetBool("isSystemAdmin")
+}
+
+func (s *AgilerrService) effectivePermissions(user *core.Record, projectID string) (ProjectPermissions, error) {
+	if s.isSystemAdmin(user) {
+		return normalizeProjectPermissions(map[string]bool{"project_admin": true}), nil
+	}
+	if strings.TrimSpace(projectID) == "" {
+		return ProjectPermissions{}, nil
+	}
+	memberships, err := loadMembershipsByUser(s.app, user.Id)
+	if err != nil {
+		return ProjectPermissions{}, err
+	}
+	for _, membership := range memberships {
+		if membership.GetString("project") == projectID {
+			return decodeProjectPermissions(membership, "permissions"), nil
+		}
+	}
+	return ProjectPermissions{}, nil
+}
+
+func (s *AgilerrService) requireSystemAdmin(e *core.RequestEvent) error {
+	if !s.isSystemAdmin(e.Auth) {
+		return e.ForbiddenError("System admin access is required.", nil)
+	}
+	return nil
+}
+
+func (s *AgilerrService) requireProjectPermission(e *core.RequestEvent, projectID string, check func(ProjectPermissions) bool, message string) error {
+	if s.isSystemAdmin(e.Auth) {
+		return nil
+	}
+	permissions, err := s.effectivePermissions(e.Auth, projectID)
+	if err != nil {
+		return serverError(e, err)
+	}
+	if !check(permissions) {
+		return e.ForbiddenError(message, nil)
+	}
+	return nil
+}
+
+func (s *AgilerrService) upsertMembership(userID, projectID string, permissions ProjectPermissions) error {
+	collection, err := s.app.FindCollectionByNameOrId(collectionMemberships)
+	if err != nil {
+		return err
+	}
+	records, err := s.app.FindAllRecords(collectionMemberships, dbx.HashExp{"user": userID, "project": projectID})
+	if err != nil {
+		return err
+	}
+	var record *core.Record
+	if len(records) > 0 {
+		record = records[0]
+	} else {
+		record = core.NewRecord(collection)
+		record.Set("user", userID)
+		record.Set("project", projectID)
+	}
+	record.Set("permissions", projectPermissionsMap(permissions))
+	return s.app.Save(record)
+}
+
+func (s *AgilerrService) replaceMemberships(userID string, memberships []SaveMembershipRequest) error {
+	existing, err := loadMembershipsByUser(s.app, userID)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, membership := range memberships {
+		projectID := strings.TrimSpace(membership.ProjectID)
+		if projectID == "" || seen[projectID] {
+			continue
+		}
+		seen[projectID] = true
+		permissions := membership.Permissions
+		permissions.ViewProject = true
+		if err := s.upsertMembership(userID, projectID, normalizeProjectPermissions(projectPermissionsMap(permissions))); err != nil {
+			return err
+		}
+	}
+	for _, record := range existing {
+		if !seen[record.GetString("project")] {
+			if err := s.app.Delete(record); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func generateTemporaryPassword() string {
+	left := []string{"amber", "cinder", "river", "daisy", "harbor", "lumen", "maple", "orbit"}
+	right := []string{"falcon", "cow", "otter", "rocket", "meadow", "comet", "fox", "pine"}
+	return left[time.Now().UnixNano()%int64(len(left))] + "-" + right[time.Now().UnixNano()%int64(len(right))] + "-42"
+}
+
 func (s *AgilerrService) handleMe(e *core.RequestEvent) error {
-	return e.JSON(http.StatusOK, map[string]any{
-		"user": recordToUser(e.Auth),
+	membershipRecords, err := loadMembershipsByUser(s.app, e.Auth.Id)
+	if err != nil {
+		return serverError(e, err)
+	}
+	memberships := make([]ProjectMembershipDTO, 0, len(membershipRecords))
+	for _, record := range membershipRecords {
+		memberships = append(memberships, recordToMembership(record))
+	}
+	return e.JSON(http.StatusOK, MeResponse{
+		User:        recordToUser(e.Auth),
+		Memberships: memberships,
 	})
 }
 
@@ -218,6 +343,147 @@ func (s *AgilerrService) handleDocsConfig(e *core.RequestEvent) error {
 	})
 }
 
+func (s *AgilerrService) handleChangePassword(e *core.RequestEvent) error {
+	var req ChangePasswordRequest
+	if err := e.BindBody(&req); err != nil {
+		return badRequest(e, "invalid request body", err)
+	}
+	if !e.Auth.ValidatePassword(req.OldPassword) {
+		return badRequest(e, "current password is incorrect", nil)
+	}
+	req.NewPassword = strings.TrimSpace(req.NewPassword)
+	if len(req.NewPassword) < 8 {
+		return badRequest(e, "new password must be at least 8 characters", nil)
+	}
+	e.Auth.SetPassword(req.NewPassword)
+	e.Auth.Set("mustChangePassword", false)
+	if err := s.app.Save(e.Auth); err != nil {
+		return serverError(e, err)
+	}
+	return e.JSON(http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *AgilerrService) handleUsersList(e *core.RequestEvent) error {
+	if err := s.requireSystemAdmin(e); err != nil {
+		return err
+	}
+	userRecords, err := loadAllUsers(s.app)
+	if err != nil {
+		return serverError(e, err)
+	}
+	projects, err := s.app.FindRecordsByFilter(collectionProjects, "deletedAt = ''", "name", 0, 0)
+	if err != nil {
+		return serverError(e, err)
+	}
+	membershipRecords, err := loadMemberships(s.app)
+	if err != nil {
+		return serverError(e, err)
+	}
+	projectDTOs := make([]ProjectDTO, 0, len(projects))
+	for _, project := range projects {
+		projectDTOs = append(projectDTOs, recordToProject(project))
+	}
+	membershipByUser := map[string][]ProjectMembershipDTO{}
+	for _, membership := range membershipRecords {
+		dto := recordToMembership(membership)
+		membershipByUser[dto.UserID] = append(membershipByUser[dto.UserID], dto)
+	}
+	users := make([]UserManagementRecord, 0, len(userRecords))
+	for _, user := range userRecords {
+		dto := recordToUser(user)
+		memberships := membershipByUser[dto.ID]
+		if memberships == nil {
+			memberships = []ProjectMembershipDTO{}
+		}
+		users = append(users, UserManagementRecord{
+			User:        dto,
+			Memberships: memberships,
+		})
+	}
+	sort.Slice(users, func(i, j int) bool { return strings.ToLower(users[i].User.Name) < strings.ToLower(users[j].User.Name) })
+	return e.JSON(http.StatusOK, map[string]any{"users": users, "projects": projectDTOs})
+}
+
+func (s *AgilerrService) handleUserCreate(e *core.RequestEvent) error {
+	if err := s.requireSystemAdmin(e); err != nil {
+		return err
+	}
+	var req SaveUserRequest
+	if err := e.BindBody(&req); err != nil {
+		return badRequest(e, "invalid request body", err)
+	}
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Email == "" || req.Name == "" {
+		return badRequest(e, "name and email are required", nil)
+	}
+	users, err := s.app.FindCollectionByNameOrId(collectionUsers)
+	if err != nil {
+		return serverError(e, err)
+	}
+	record := core.NewRecord(users)
+	tempPassword := generateTemporaryPassword()
+	record.SetEmail(req.Email)
+	record.SetPassword(tempPassword)
+	record.Set("name", req.Name)
+	record.Set("isSystemAdmin", req.SystemAdmin)
+	record.Set("createProjects", req.CreateProjects)
+	record.Set("mustChangePassword", true)
+	if err := s.app.Save(record); err != nil {
+		return badRequest(e, "failed to create user", err)
+	}
+	if err := s.replaceMemberships(record.Id, req.Memberships); err != nil {
+		return serverError(e, err)
+	}
+	return e.JSON(http.StatusCreated, map[string]any{"user": recordToUser(record), "temporaryPassword": tempPassword})
+}
+
+func (s *AgilerrService) handleUserUpdate(e *core.RequestEvent) error {
+	if err := s.requireSystemAdmin(e); err != nil {
+		return err
+	}
+	userRecord, err := s.app.FindRecordById(collectionUsers, e.Request.PathValue("userId"))
+	if err != nil {
+		return notFound(e, "user not found")
+	}
+	var req SaveUserRequest
+	if err := e.BindBody(&req); err != nil {
+		return badRequest(e, "invalid request body", err)
+	}
+	if email := strings.TrimSpace(strings.ToLower(req.Email)); email != "" {
+		userRecord.SetEmail(email)
+	}
+	if name := strings.TrimSpace(req.Name); name != "" {
+		userRecord.Set("name", name)
+	}
+	userRecord.Set("isSystemAdmin", req.SystemAdmin)
+	userRecord.Set("createProjects", req.CreateProjects)
+	if err := s.app.Save(userRecord); err != nil {
+		return badRequest(e, "failed to update user", err)
+	}
+	if err := s.replaceMemberships(userRecord.Id, req.Memberships); err != nil {
+		return serverError(e, err)
+	}
+	return e.JSON(http.StatusOK, map[string]any{"user": recordToUser(userRecord)})
+}
+
+func (s *AgilerrService) handleUserResetPassword(e *core.RequestEvent) error {
+	if err := s.requireSystemAdmin(e); err != nil {
+		return err
+	}
+	userRecord, err := s.app.FindRecordById(collectionUsers, e.Request.PathValue("userId"))
+	if err != nil {
+		return notFound(e, "user not found")
+	}
+	tempPassword := generateTemporaryPassword()
+	userRecord.SetPassword(tempPassword)
+	userRecord.Set("mustChangePassword", true)
+	if err := s.app.Save(userRecord); err != nil {
+		return serverError(e, err)
+	}
+	return e.JSON(http.StatusOK, map[string]any{"temporaryPassword": tempPassword})
+}
+
 func (s *AgilerrService) handleProjectsList(e *core.RequestEvent) error {
 	records, err := s.app.FindRecordsByFilter(collectionProjects, "deletedAt = ''", "name", 0, 0)
 	if err != nil {
@@ -225,8 +491,28 @@ func (s *AgilerrService) handleProjectsList(e *core.RequestEvent) error {
 	}
 
 	projects := make([]ProjectDTO, 0, len(records))
+	if s.isSystemAdmin(e.Auth) {
+		for _, record := range records {
+			projects = append(projects, recordToProject(record))
+		}
+		return e.JSON(http.StatusOK, map[string]any{"projects": projects})
+	}
+
+	membershipRecords, err := loadMembershipsByUser(s.app, e.Auth.Id)
+	if err != nil {
+		return serverError(e, err)
+	}
+	allowed := map[string]bool{}
+	for _, membership := range membershipRecords {
+		permissions := decodeProjectPermissions(membership, "permissions")
+		if permissions.ViewProject {
+			allowed[membership.GetString("project")] = true
+		}
+	}
 	for _, record := range records {
-		projects = append(projects, recordToProject(record))
+		if allowed[record.Id] {
+			projects = append(projects, recordToProject(record))
+		}
 	}
 
 	return e.JSON(http.StatusOK, map[string]any{"projects": projects})
@@ -241,6 +527,9 @@ func (s *AgilerrService) handleProjectCreate(e *core.RequestEvent) error {
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
 		return badRequest(e, "project name is required", nil)
+	}
+	if !s.isSystemAdmin(e.Auth) && !e.Auth.GetBool("createProjects") {
+		return e.ForbiddenError("Create project permission is required.", nil)
 	}
 
 	collection, err := s.app.FindCollectionByNameOrId(collectionProjects)
@@ -261,6 +550,9 @@ func (s *AgilerrService) handleProjectCreate(e *core.RequestEvent) error {
 		return badRequest(e, "failed to save project", err)
 	}
 	record = record.Fresh()
+	if err := s.upsertMembership(e.Auth.Id, record.Id, normalizeProjectPermissions(map[string]bool{"project_admin": true})); err != nil {
+		return serverError(e, err)
+	}
 
 	return e.JSON(http.StatusCreated, map[string]any{"project": recordToProject(record)})
 }
@@ -269,6 +561,11 @@ func (s *AgilerrService) handleProjectUpdate(e *core.RequestEvent) error {
 	projectRecord, err := findProject(s.app, e.Request.PathValue("projectId"))
 	if err != nil {
 		return notFound(e, "project not found")
+	}
+	if err := s.requireProjectPermission(e, projectRecord.Id, func(p ProjectPermissions) bool {
+		return p.EditProjectSettings || p.EditProject || p.ProjectAdmin
+	}, "Project settings permission is required."); err != nil {
+		return err
 	}
 
 	var req CreateProjectRequest
@@ -306,10 +603,21 @@ func (s *AgilerrService) handleProjectTree(e *core.RequestEvent) error {
 	if err != nil {
 		return notFound(e, "project not found")
 	}
+	if err := s.requireProjectPermission(e, projectID, func(p ProjectPermissions) bool { return p.ViewProject }, "Project view permission is required."); err != nil {
+		return err
+	}
 
-	unitRecords, err := loadProjectRecords(s.app, projectID)
+	canViewUnits, err := s.effectivePermissions(e.Auth, projectID)
 	if err != nil {
 		return serverError(e, err)
+	}
+
+	unitRecords := []*core.Record{}
+	if s.isSystemAdmin(e.Auth) || canViewUnits.ViewUnits {
+		unitRecords, err = loadProjectRecords(s.app, projectID)
+		if err != nil {
+			return serverError(e, err)
+		}
 	}
 
 	unitIDs := make([]string, 0, len(unitRecords))
@@ -319,9 +627,12 @@ func (s *AgilerrService) handleProjectTree(e *core.RequestEvent) error {
 		units = append(units, recordToUnit(record))
 	}
 
-	commentRecords, err := loadProjectComments(s.app, unitIDs)
-	if err != nil {
-		return serverError(e, err)
+	commentRecords := []*core.Record{}
+	if len(unitIDs) > 0 {
+		commentRecords, err = loadProjectComments(s.app, unitIDs)
+		if err != nil {
+			return serverError(e, err)
+		}
 	}
 
 	comments := make([]CommentDTO, 0, len(commentRecords))
@@ -365,6 +676,9 @@ func (s *AgilerrService) handleProjectTree(e *core.RequestEvent) error {
 
 func (s *AgilerrService) handleUnitCreate(e *core.RequestEvent) error {
 	projectID := e.Request.PathValue("projectId")
+	if err := s.requireProjectPermission(e, projectID, func(p ProjectPermissions) bool { return p.EditUnits }, "Edit item permission is required."); err != nil {
+		return err
+	}
 
 	var req SaveUnitRequest
 	if err := e.BindBody(&req); err != nil {
@@ -432,6 +746,9 @@ func (s *AgilerrService) handleUnitUpdate(e *core.RequestEvent) error {
 	unitRecord, err := findUnit(s.app, e.Request.PathValue("unitId"))
 	if err != nil {
 		return notFound(e, "unit not found")
+	}
+	if err := s.requireProjectPermission(e, unitRecord.GetString("project"), func(p ProjectPermissions) bool { return p.EditUnits }, "Edit item permission is required."); err != nil {
+		return err
 	}
 
 	var req SaveUnitRequest
@@ -505,6 +822,9 @@ func (s *AgilerrService) handleUnitMove(e *core.RequestEvent) error {
 	if err != nil {
 		return notFound(e, "unit not found")
 	}
+	if err := s.requireProjectPermission(e, unitRecord.GetString("project"), func(p ProjectPermissions) bool { return p.EditUnits }, "Edit item permission is required."); err != nil {
+		return err
+	}
 
 	var req MoveUnitRequest
 	if err := e.BindBody(&req); err != nil {
@@ -538,6 +858,9 @@ func (s *AgilerrService) handleUnitDelete(e *core.RequestEvent) error {
 	if err != nil {
 		return notFound(e, "unit not found")
 	}
+	if err := s.requireProjectPermission(e, unitRecord.GetString("project"), func(p ProjectPermissions) bool { return p.DeleteUnits }, "Delete item permission is required."); err != nil {
+		return err
+	}
 	if err := s.softDeleteUnitTree(unitRecord); err != nil {
 		return serverError(e, err)
 	}
@@ -549,6 +872,9 @@ func (s *AgilerrService) handleProjectDeletePreview(e *core.RequestEvent) error 
 	projectRecord, err := findProject(s.app, e.Request.PathValue("projectId"))
 	if err != nil {
 		return notFound(e, "project not found")
+	}
+	if err := s.requireProjectPermission(e, projectRecord.Id, func(p ProjectPermissions) bool { return p.ProjectAdmin }, "Project admin permission is required."); err != nil {
+		return err
 	}
 	unitRecords, err := loadProjectRecords(s.app, projectRecord.Id)
 	if err != nil {
@@ -575,6 +901,9 @@ func (s *AgilerrService) handleProjectDelete(e *core.RequestEvent) error {
 	if err != nil {
 		return notFound(e, "project not found")
 	}
+	if err := s.requireProjectPermission(e, projectRecord.Id, func(p ProjectPermissions) bool { return p.ProjectAdmin }, "Project admin permission is required."); err != nil {
+		return err
+	}
 	if err := s.softDeleteProject(projectRecord); err != nil {
 		return serverError(e, err)
 	}
@@ -585,6 +914,9 @@ func (s *AgilerrService) handleUnitDeletePreview(e *core.RequestEvent) error {
 	unitRecord, err := findUnit(s.app, e.Request.PathValue("unitId"))
 	if err != nil {
 		return notFound(e, "item not found")
+	}
+	if err := s.requireProjectPermission(e, unitRecord.GetString("project"), func(p ProjectPermissions) bool { return p.DeleteUnits }, "Delete item permission is required."); err != nil {
+		return err
 	}
 	descendants, err := s.collectUnitDescendants(unitRecord.Id)
 	if err != nil {
@@ -607,6 +939,9 @@ func (s *AgilerrService) handleUnitDeletePreview(e *core.RequestEvent) error {
 }
 
 func (s *AgilerrService) handleDeletedList(e *core.RequestEvent) error {
+	if err := s.requireSystemAdmin(e); err != nil {
+		return err
+	}
 	projectRecords, err := s.app.FindAllRecords(collectionProjects, dbx.Not(dbx.HashExp{"deletedAt": ""}))
 	if err != nil {
 		return serverError(e, err)
@@ -627,6 +962,9 @@ func (s *AgilerrService) handleDeletedList(e *core.RequestEvent) error {
 }
 
 func (s *AgilerrService) handleDeletedPurge(e *core.RequestEvent) error {
+	if err := s.requireSystemAdmin(e); err != nil {
+		return err
+	}
 	var req HardDeleteRequest
 	if err := e.BindBody(&req); err != nil {
 		return badRequest(e, "invalid request body", err)
@@ -666,8 +1004,12 @@ func (s *AgilerrService) handleDeletedPurge(e *core.RequestEvent) error {
 
 func (s *AgilerrService) handleCommentsList(e *core.RequestEvent) error {
 	unitID := e.Request.PathValue("unitId")
-	if _, err := findUnit(s.app, unitID); err != nil {
+	unitRecord, err := findUnit(s.app, unitID)
+	if err != nil {
 		return notFound(e, "unit not found")
+	}
+	if err := s.requireProjectPermission(e, unitRecord.GetString("project"), func(p ProjectPermissions) bool { return p.ViewUnits }, "View item permission is required."); err != nil {
+		return err
 	}
 
 	records, err := s.app.FindRecordsByFilter(collectionComments, "unit = {:unit}", "created", 0, 0, dbx.Params{"unit": unitID})
@@ -687,6 +1029,9 @@ func (s *AgilerrService) handleCommentCreate(e *core.RequestEvent) error {
 	unitRecord, err := findUnit(s.app, e.Request.PathValue("unitId"))
 	if err != nil {
 		return notFound(e, "unit not found")
+	}
+	if err := s.requireProjectPermission(e, unitRecord.GetString("project"), func(p ProjectPermissions) bool { return p.EditUnits }, "Edit item permission is required."); err != nil {
+		return err
 	}
 
 	var req CreateCommentRequest
@@ -721,6 +1066,9 @@ func (s *AgilerrService) handleCommentCreate(e *core.RequestEvent) error {
 func (s *AgilerrService) handleSuggestions(e *core.RequestEvent) error {
 	projectID := e.Request.PathValue("projectId")
 	query := strings.ToLower(strings.TrimSpace(e.Request.URL.Query().Get("q")))
+	if err := s.requireProjectPermission(e, projectID, func(p ProjectPermissions) bool { return p.ViewUnits }, "View item permission is required."); err != nil {
+		return err
+	}
 
 	unitRecords, err := loadProjectRecords(s.app, projectID)
 	if err != nil {
@@ -915,6 +1263,10 @@ func (s *AgilerrService) hardDeleteProject(projectRecord *core.Record) error {
 	if err != nil {
 		return err
 	}
+	memberships, err := loadMembershipsByProject(s.app, projectRecord.Id)
+	if err != nil {
+		return err
+	}
 	for _, session := range sessions {
 		messages, err := s.app.FindAllRecords(collectionAIPlanMessages, dbx.HashExp{"session": session.Id})
 		if err != nil {
@@ -931,6 +1283,11 @@ func (s *AgilerrService) hardDeleteProject(projectRecord *core.Record) error {
 	}
 	for _, record := range unitRecords {
 		if err := s.app.Delete(record); err != nil {
+			return err
+		}
+	}
+	for _, membership := range memberships {
+		if err := s.app.Delete(membership); err != nil {
 			return err
 		}
 	}

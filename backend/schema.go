@@ -40,6 +40,14 @@ func (s *AgilerrService) EnsureSchema() error {
 		return err
 	}
 
+	_, err = s.ensureMembershipsCollection()
+	if err != nil {
+		return err
+	}
+	if err := s.app.ReloadCachedCollections(); err != nil {
+		return err
+	}
+
 	_, err = s.ensureAIPlanSessionsCollection()
 	if err != nil {
 		return err
@@ -61,16 +69,18 @@ func (s *AgilerrService) ensureUsersCollection() (*core.Collection, error) {
 		col = core.NewAuthCollection(collectionUsers)
 	}
 
-	public := types.Pointer("")
 	self := types.Pointer("@request.auth.id = id")
 
-	col.CreateRule = public
+	col.CreateRule = nil
 	col.ViewRule = self
 	col.UpdateRule = self
 	col.DeleteRule = nil
 	col.ListRule = nil
 	col.Fields.Add(
 		&core.TextField{Name: "name", Required: true, Min: 1, Max: 120},
+		&core.BoolField{Name: "isSystemAdmin"},
+		&core.BoolField{Name: "createProjects"},
+		&core.BoolField{Name: "mustChangePassword"},
 	)
 
 	return col, s.app.Save(col)
@@ -164,6 +174,30 @@ func (s *AgilerrService) ensureCommentsCollection(_ string, _ string) (*core.Col
 		&core.TextField{Name: "author", Required: true, Min: 1, Max: 32},
 		&core.TextField{Name: "body", Required: true, Min: 1, Max: 20000},
 		&core.JSONField{Name: "mentions"},
+	)
+
+	return col, s.app.Save(col)
+}
+
+func (s *AgilerrService) ensureMembershipsCollection() (*core.Collection, error) {
+	col, err := s.app.FindCollectionByNameOrId(collectionMemberships)
+	if err != nil {
+		col = core.NewBaseCollection(collectionMemberships)
+	} else if col.Type != core.CollectionTypeBase {
+		return nil, errors.New("project memberships collection exists with an incompatible type")
+	}
+
+	authenticated := types.Pointer("@request.auth.id != ''")
+
+	col.ListRule = authenticated
+	col.ViewRule = authenticated
+	col.CreateRule = authenticated
+	col.UpdateRule = authenticated
+	col.DeleteRule = authenticated
+	col.Fields.Add(
+		&core.TextField{Name: "user", Required: true, Min: 1, Max: 32},
+		&core.TextField{Name: "project", Required: true, Min: 1, Max: 32},
+		&core.JSONField{Name: "permissions"},
 	)
 
 	return col, s.app.Save(col)

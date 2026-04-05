@@ -9,6 +9,44 @@ export interface User {
   email: string
   name: string
   gravatar: string
+  systemAdmin: boolean
+  createProjects: boolean
+  mustChangePassword: boolean
+}
+
+export interface ProjectPermissions {
+  viewUnits: boolean
+  editUnits: boolean
+  deleteUnits: boolean
+  addWithAI: boolean
+  viewProject: boolean
+  editProject: boolean
+  editProjectSettings: boolean
+  projectAdmin: boolean
+}
+
+export interface ProjectMembership {
+  id: string
+  userId: string
+  projectId: string
+  permissions: ProjectPermissions
+  created: string
+  updated: string
+}
+
+export interface MeResponse {
+  user: User
+  memberships: ProjectMembership[]
+}
+
+export interface ManagedUser {
+  user: User
+  memberships: ProjectMembership[]
+}
+
+export interface SaveMembership {
+  projectId: string
+  permissions: ProjectPermissions
 }
 
 export interface Project {

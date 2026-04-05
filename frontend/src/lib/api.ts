@@ -1,5 +1,5 @@
 import { pb } from './pocketbase'
-import type { AIPlanProposal, AIPlanState, AIProjectDraft, AIPlanChatMessage, ApiDocsConfig, Comment, DeletedItem, DeletePreview, Project, ProjectTree, Suggestions, Unit, User } from '../types'
+import type { AIPlanProposal, AIPlanState, AIProjectDraft, AIPlanChatMessage, ApiDocsConfig, Comment, DeletedItem, DeletePreview, ManagedUser, MeResponse, Project, ProjectTree, SaveMembership, Suggestions, Unit, User } from '../types'
 
 const apiBase = import.meta.env.VITE_API_URL || ''
 
@@ -23,8 +23,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  me: () => request<{ user: User }>('/api/agilerr/me'),
+  me: () => request<MeResponse>('/api/agilerr/me'),
+  changePassword: (body: { oldPassword: string; newPassword: string }) =>
+    request<{ ok: boolean }>('/api/agilerr/me/password', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   docsConfig: () => request<ApiDocsConfig>('/api/agilerr/docs-config'),
+  users: () => request<{ users: ManagedUser[]; projects: Project[] }>('/api/agilerr/users'),
+  createUser: (body: { email: string; name: string; systemAdmin: boolean; createProjects: boolean; memberships: SaveMembership[] }) =>
+    request<{ user: User; temporaryPassword: string }>('/api/agilerr/users', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  updateUser: (userId: string, body: { email: string; name: string; systemAdmin: boolean; createProjects: boolean; memberships: SaveMembership[] }) =>
+    request<{ user: User }>(`/api/agilerr/users/${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  resetUserPassword: (userId: string) =>
+    request<{ temporaryPassword: string }>(`/api/agilerr/users/${userId}/reset-password`, {
+      method: 'POST',
+    }),
   projects: () => request<{ projects: Project[] }>('/api/agilerr/projects'),
   createProject: (body: Partial<Project>) =>
     request<{ project: Project }>('/api/agilerr/projects', {

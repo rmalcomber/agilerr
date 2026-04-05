@@ -105,6 +105,9 @@ type aiPlanStateResponse struct {
 }
 
 func (s *AgilerrService) handleProjectDraftAI(e *core.RequestEvent) error {
+	if !s.isSystemAdmin(e.Auth) && !e.Auth.GetBool("createProjects") {
+		return e.ForbiddenError("Create project permission is required.", nil)
+	}
 	var req aiProjectDraftRequest
 	if err := e.BindBody(&req); err != nil {
 		return badRequest(e, "invalid request body", err)
@@ -130,6 +133,9 @@ func (s *AgilerrService) handleProjectDraftAI(e *core.RequestEvent) error {
 }
 
 func (s *AgilerrService) handleProjectDraftAIStream(e *core.RequestEvent) error {
+	if !s.isSystemAdmin(e.Auth) && !e.Auth.GetBool("createProjects") {
+		return e.ForbiddenError("Create project permission is required.", nil)
+	}
 	var req aiProjectDraftRequest
 	if err := e.BindBody(&req); err != nil {
 		return badRequest(e, "invalid request body", err)
@@ -177,6 +183,9 @@ func (s *AgilerrService) handleAIPlanOpen(e *core.RequestEvent) error {
 	projectID := e.Request.PathValue("projectId")
 	if _, err := findProject(s.app, projectID); err != nil {
 		return notFound(e, "project not found")
+	}
+	if err := s.requireProjectPermission(e, projectID, func(p ProjectPermissions) bool { return p.AddWithAI }, "AI add permission is required."); err != nil {
+		return err
 	}
 
 	var req aiPlanOpenRequest
@@ -231,6 +240,9 @@ func (s *AgilerrService) handleAIPlanMessage(e *core.RequestEvent) error {
 	sessionRecord, err := s.app.FindRecordById(collectionAIPlanSessions, e.Request.PathValue("sessionId"))
 	if err != nil {
 		return notFound(e, "ai plan session not found")
+	}
+	if err := s.requireProjectPermission(e, sessionRecord.GetString("project"), func(p ProjectPermissions) bool { return p.AddWithAI }, "AI add permission is required."); err != nil {
+		return err
 	}
 
 	var req aiPlanMessageRequest
@@ -298,6 +310,9 @@ func (s *AgilerrService) handleAIPlanMessageStream(e *core.RequestEvent) error {
 	if err != nil {
 		return notFound(e, "ai plan session not found")
 	}
+	if err := s.requireProjectPermission(e, sessionRecord.GetString("project"), func(p ProjectPermissions) bool { return p.AddWithAI }, "AI add permission is required."); err != nil {
+		return err
+	}
 
 	var req aiPlanMessageRequest
 	if err := e.BindBody(&req); err != nil {
@@ -359,6 +374,9 @@ func (s *AgilerrService) handleAIPlanApply(e *core.RequestEvent) error {
 	sessionRecord, err := s.app.FindRecordById(collectionAIPlanSessions, e.Request.PathValue("sessionId"))
 	if err != nil {
 		return notFound(e, "ai plan session not found")
+	}
+	if err := s.requireProjectPermission(e, sessionRecord.GetString("project"), func(p ProjectPermissions) bool { return p.AddWithAI }, "AI add permission is required."); err != nil {
+		return err
 	}
 
 	var req aiPlanApplyRequest

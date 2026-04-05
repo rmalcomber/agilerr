@@ -17,6 +17,7 @@ const (
 	collectionProjects       = "projects"
 	collectionUnits          = "units"
 	collectionComments       = "comments"
+	collectionMemberships    = "project_memberships"
 	collectionAIPlanSessions = "ai_plan_sessions"
 	collectionAIPlanMessages = "ai_plan_messages"
 )
@@ -41,6 +42,16 @@ var (
 		"in_progress": "#38bdf8",
 		"review":      "#a78bfa",
 		"done":        "#22c55e",
+	}
+	projectPermissionKeys = []string{
+		"view_units",
+		"edit_units",
+		"delete_units",
+		"add_with_ai",
+		"view_project",
+		"edit_project",
+		"edit_project_settings",
+		"project_admin",
 	}
 )
 
@@ -104,10 +115,43 @@ type CommentDTO struct {
 }
 
 type UserDTO struct {
-	ID       string `json:"id"`
-	Email    string `json:"email"`
-	Name     string `json:"name"`
-	Gravatar string `json:"gravatar"`
+	ID                 string `json:"id"`
+	Email              string `json:"email"`
+	Name               string `json:"name"`
+	Gravatar           string `json:"gravatar"`
+	SystemAdmin        bool   `json:"systemAdmin"`
+	CreateProjects     bool   `json:"createProjects"`
+	MustChangePassword bool   `json:"mustChangePassword"`
+}
+
+type ProjectPermissions struct {
+	ViewUnits           bool `json:"viewUnits"`
+	EditUnits           bool `json:"editUnits"`
+	DeleteUnits         bool `json:"deleteUnits"`
+	AddWithAI           bool `json:"addWithAI"`
+	ViewProject         bool `json:"viewProject"`
+	EditProject         bool `json:"editProject"`
+	EditProjectSettings bool `json:"editProjectSettings"`
+	ProjectAdmin        bool `json:"projectAdmin"`
+}
+
+type ProjectMembershipDTO struct {
+	ID          string             `json:"id"`
+	UserID      string             `json:"userId"`
+	ProjectID   string             `json:"projectId"`
+	Permissions ProjectPermissions `json:"permissions"`
+	Created     time.Time          `json:"created"`
+	Updated     time.Time          `json:"updated"`
+}
+
+type MeResponse struct {
+	User        UserDTO                `json:"user"`
+	Memberships []ProjectMembershipDTO `json:"memberships"`
+}
+
+type UserManagementRecord struct {
+	User        UserDTO                `json:"user"`
+	Memberships []ProjectMembershipDTO `json:"memberships"`
 }
 
 type Mention struct {
@@ -131,6 +175,24 @@ type CreateProjectRequest struct {
 	Tags         []string            `json:"tags"`
 	UnitColors   UnitColorSettings   `json:"unitColors"`
 	StatusColors StatusColorSettings `json:"statusColors"`
+}
+
+type SaveUserRequest struct {
+	Email          string                  `json:"email"`
+	Name           string                  `json:"name"`
+	SystemAdmin    bool                    `json:"systemAdmin"`
+	CreateProjects bool                    `json:"createProjects"`
+	Memberships    []SaveMembershipRequest `json:"memberships"`
+}
+
+type SaveMembershipRequest struct {
+	ProjectID   string             `json:"projectId"`
+	Permissions ProjectPermissions `json:"permissions"`
+}
+
+type ChangePasswordRequest struct {
+	OldPassword string `json:"oldPassword"`
+	NewPassword string `json:"newPassword"`
 }
 
 type SaveUnitRequest struct {
@@ -280,10 +342,24 @@ func recordToComment(record *core.Record) CommentDTO {
 func recordToUser(record *core.Record) UserDTO {
 	email := record.Email()
 	return UserDTO{
-		ID:       record.Id,
-		Email:    email,
-		Name:     firstNonEmpty(record.GetString("name"), email),
-		Gravatar: gravatarURL(email),
+		ID:                 record.Id,
+		Email:              email,
+		Name:               firstNonEmpty(record.GetString("name"), email),
+		Gravatar:           gravatarURL(email),
+		SystemAdmin:        record.GetBool("isSystemAdmin"),
+		CreateProjects:     record.GetBool("createProjects"),
+		MustChangePassword: record.GetBool("mustChangePassword"),
+	}
+}
+
+func recordToMembership(record *core.Record) ProjectMembershipDTO {
+	return ProjectMembershipDTO{
+		ID:          record.Id,
+		UserID:      record.GetString("user"),
+		ProjectID:   record.GetString("project"),
+		Permissions: decodeProjectPermissions(record, "permissions"),
+		Created:     record.GetDateTime("created").Time(),
+		Updated:     record.GetDateTime("updated").Time(),
 	}
 }
 
@@ -313,6 +389,51 @@ func decodeMentions(record *core.Record, field string) []Mention {
 	var parsed []Mention
 	_ = record.UnmarshalJSONField(field, &parsed)
 	return normalizeMentions(parsed)
+}
+
+func decodeProjectPermissions(record *core.Record, field string) ProjectPermissions {
+	var parsed map[string]bool
+	_ = record.UnmarshalJSONField(field, &parsed)
+	return normalizeProjectPermissions(parsed)
+}
+
+func normalizeProjectPermissions(values map[string]bool) ProjectPermissions {
+	normalized := map[string]bool{}
+	for _, key := range projectPermissionKeys {
+		normalized[key] = values[key]
+	}
+	if normalized["project_admin"] {
+		normalized["view_units"] = true
+		normalized["edit_units"] = true
+		normalized["delete_units"] = true
+		normalized["add_with_ai"] = true
+		normalized["view_project"] = true
+		normalized["edit_project"] = true
+		normalized["edit_project_settings"] = true
+	}
+	return ProjectPermissions{
+		ViewUnits:           normalized["view_units"],
+		EditUnits:           normalized["edit_units"],
+		DeleteUnits:         normalized["delete_units"],
+		AddWithAI:           normalized["add_with_ai"],
+		ViewProject:         normalized["view_project"],
+		EditProject:         normalized["edit_project"],
+		EditProjectSettings: normalized["edit_project_settings"],
+		ProjectAdmin:        normalized["project_admin"],
+	}
+}
+
+func projectPermissionsMap(permissions ProjectPermissions) map[string]bool {
+	return map[string]bool{
+		"view_units":            permissions.ViewUnits,
+		"edit_units":            permissions.EditUnits,
+		"delete_units":          permissions.DeleteUnits,
+		"add_with_ai":           permissions.AddWithAI,
+		"view_project":          permissions.ViewProject,
+		"edit_project":          permissions.EditProject,
+		"edit_project_settings": permissions.EditProjectSettings,
+		"project_admin":         permissions.ProjectAdmin,
+	}
 }
 
 func normalizeUnitColors(colors map[string]string) UnitColorSettings {
@@ -382,6 +503,18 @@ func mapUsersByID(users []*core.Record) map[string]UserDTO {
 
 func loadAllUsers(app core.App) ([]*core.Record, error) {
 	return app.FindAllRecords(collectionUsers)
+}
+
+func loadMemberships(app core.App) ([]*core.Record, error) {
+	return app.FindAllRecords(collectionMemberships)
+}
+
+func loadMembershipsByUser(app core.App, userID string) ([]*core.Record, error) {
+	return app.FindAllRecords(collectionMemberships, dbx.HashExp{"user": userID})
+}
+
+func loadMembershipsByProject(app core.App, projectID string) ([]*core.Record, error) {
+	return app.FindAllRecords(collectionMemberships, dbx.HashExp{"project": projectID})
 }
 
 func loadProjectRecords(app core.App, projectID string) ([]*core.Record, error) {
