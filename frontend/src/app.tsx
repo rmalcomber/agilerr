@@ -4112,6 +4112,8 @@ type DocsEntry = {
   body: string
   tags: string[]
   permissions: string[]
+  image?: string
+  imageAlt?: string
 }
 
 const docsEntries: DocsEntry[] = [
@@ -4120,48 +4122,64 @@ const docsEntries: DocsEntry[] = [
     body: 'Accounts are created by a system admin. Sign in with the email and temporary password you were given. If the account is marked for first-use rotation, Agilerr will block the app until you set a new password.',
     tags: ['auth', 'login', 'password'],
     permissions: [],
+    image: '/faq/docs-root.webp',
+    imageAlt: 'Agilerr root docs page with the FAQ search bar',
   },
   {
     title: 'Projects and membership',
     body: 'Projects are only visible when you are a member of them. Membership also defines what you can do inside that project, such as viewing backlog items, editing work, deleting items, using AI Add, or changing project settings.',
     tags: ['projects', 'membership', 'visibility'],
     permissions: ['View Projects'],
+    image: '/faq/project-dashboard.webp',
+    imageAlt: 'Project dashboard showing overview metrics and quick links',
   },
   {
     title: 'Backlog hierarchy',
     body: 'Business planning follows a strict hierarchy: Project -> Epic -> Feature -> User Story -> Task. Bugs are separate from this tree and live on the project-wide Bugs page. Tasks are intended for delivery teams and are never AI-generated.',
     tags: ['backlog', 'hierarchy', 'bugs'],
     permissions: ['View Units'],
+    image: '/faq/project-backlog.webp',
+    imageAlt: 'Project backlog with nested item hierarchy',
   },
   {
     title: 'Backlog filters',
     body: 'Use the type filter to show only epics, features, stories, or tasks. Use the tag filter bar to narrow the tree by tags. When lower levels are selected without their parents, Agilerr keeps the missing levels visible as faded structural nodes so the context still makes sense.',
     tags: ['backlog', 'filters', 'tags'],
     permissions: ['View Units'],
+    image: '/faq/project-backlog.webp',
+    imageAlt: 'Project backlog showing the filter controls and nested cards',
   },
   {
     title: 'Kanban boards',
     body: 'Kanban pages show only the direct children for the current context. The project board shows epics, an epic page shows features, a feature page shows stories, and a story page shows tasks. Drag cards between lanes to update status quickly.',
     tags: ['kanban', 'status', 'drag-drop'],
     permissions: ['View Units', 'Edit Units'],
+    image: '/faq/project-kanban.webp',
+    imageAlt: 'Project kanban board with multiple swim lanes',
   },
   {
     title: 'Comments, tags, and mentions',
     body: 'Each item supports markdown comments, free-text tags, and mentions for users or other items. Viewing an item also allows viewing its comments. Editing permissions are required to add or change content.',
     tags: ['comments', 'mentions', 'markdown'],
     permissions: ['View Units', 'Edit Units'],
+    image: '/faq/project-backlog.webp',
+    imageAlt: 'Backlog card layout showing tags and item details',
   },
   {
     title: 'Assigned work',
     body: 'Items can be assigned to a user from the add/edit form. The dashboard includes an Assigned to you section with the same type filtering pattern as the backlog, making it easy to focus on only the kinds of work you care about.',
     tags: ['assignee', 'dashboard', 'workload'],
     permissions: ['View Units'],
+    image: '/faq/project-dashboard.webp',
+    imageAlt: 'Project dashboard with the assigned work section',
   },
   {
     title: 'AI Add',
     body: 'AI Add opens a planning conversation that helps flesh out projects, epics, features, user stories, or bugs. It can suggest multiple sibling items, support one extra generation level when enabled, and stores compact planning history against the project or parent context for future sessions.',
     tags: ['ai', 'planning', 'openai'],
     permissions: ['Add with AI'],
+    image: '/faq/project-dashboard.webp',
+    imageAlt: 'Project dashboard with quick entry points into planning flows',
   },
   {
     title: 'Deleting and recovery',
@@ -4174,6 +4192,8 @@ const docsEntries: DocsEntry[] = [
     body: 'Project creation is controlled separately from project editing. A user can be allowed to create new projects globally, while per-project permissions control whether they can edit metadata or change settings for a specific project.',
     tags: ['projects', 'settings', 'admin'],
     permissions: ['Create Projects', 'Edit Projects', 'Edit Project Settings'],
+    image: '/faq/project-settings.webp',
+    imageAlt: 'Project settings page with grouped controls',
   },
   {
     title: 'Project admin and system admin',
@@ -4186,6 +4206,32 @@ const docsEntries: DocsEntry[] = [
     body: 'Only system admins can create users, assign project memberships, edit permissions, or reset passwords. Newly created users receive a temporary password and must change it before they can access the rest of the application.',
     tags: ['users', 'permissions', 'password'],
     permissions: ['System Admin'],
+    image: '/faq/users.webp',
+    imageAlt: 'System users page for creating and managing users',
+  },
+  {
+    title: 'API docs',
+    body: 'System admins can use the top-level API page to inspect the REST surface, swap real project or item ids into examples, and copy authenticated curl commands that already include the configured API key header.',
+    tags: ['api', 'rest', 'automation'],
+    permissions: ['System Admin'],
+    image: '/faq/api-docs.webp',
+    imageAlt: 'Interactive API docs page with endpoint examples',
+  },
+  {
+    title: 'MCP access',
+    body: 'Agilerr exposes MCP over HTTP for agent workflows. The MCP docs page shows the endpoint, auth header, initialization examples, and available tools so system admins can wire local agents into the running app without launching a separate binary.',
+    tags: ['mcp', 'agents', 'automation'],
+    permissions: ['System Admin'],
+    image: '/faq/mcp-docs.webp',
+    imageAlt: 'MCP docs page with HTTP examples and tool descriptions',
+  },
+  {
+    title: 'Bug workflow',
+    body: 'Bugs are managed outside the normal epic-feature-story-task tree. The Bugs page supports list and board views, starts new bugs in triage, and keeps the team focused on validating the issue before it enters the main delivery flow.',
+    tags: ['bugs', 'triage', 'quality'],
+    permissions: ['View Projects', 'View Units'],
+    image: '/faq/project-bugs.webp',
+    imageAlt: 'Project bugs page with bug-specific workflow',
   },
   {
     title: 'Keyboard shortcuts',
@@ -4234,8 +4280,17 @@ function DocsFaqPage() {
         <div class="mt-4 space-y-4">
           {visibleEntries.map((entry) => (
             <article class="rounded-xl border border-base-300 bg-base-100 p-4">
-              <h3 class="text-base font-semibold">{entry.title}</h3>
-              <p class="mt-2 text-sm leading-6 text-base-content/85">{entry.body}</p>
+              <div class={`grid gap-4 ${entry.image ? 'xl:grid-cols-[1.1fr,0.9fr]' : ''}`}>
+                <div>
+                  <h3 class="text-base font-semibold">{entry.title}</h3>
+                  <p class="mt-2 text-sm leading-6 text-base-content/85">{entry.body}</p>
+                </div>
+                {entry.image && (
+                  <div class="overflow-hidden rounded-xl border border-base-300 bg-base-200/50">
+                    <img src={entry.image} alt={entry.imageAlt || entry.title} class="h-full w-full object-cover object-top" loading="lazy" />
+                  </div>
+                )}
+              </div>
               <div class="mt-3 flex flex-wrap gap-2">
                 {entry.tags.map((tag) => (
                   <span class="badge badge-outline border-base-content/30 text-base-content/90">{tag}</span>

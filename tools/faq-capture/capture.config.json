@@ -1,0 +1,56 @@
+{
+  "baseUrl": "http://localhost:5173",
+  "viewport": {
+    "width": 1600,
+    "height": 1100
+  },
+  "screenshots": [
+    {
+      "name": "docs-root",
+      "path": "/docs",
+      "waitFor": "text=How to use Agilerr"
+    },
+    {
+      "name": "project-dashboard",
+      "path": "__FIRST_PROJECT_DASHBOARD__",
+      "waitFor": "text=Project dashboard"
+    },
+    {
+      "name": "project-kanban",
+      "path": "__FIRST_PROJECT_KANBAN__",
+      "waitFor": "text=Epic Board"
+    },
+    {
+      "name": "project-backlog",
+      "path": "__FIRST_PROJECT_BACKLOG__",
+      "waitFor": "text=Backlog"
+    },
+    {
+      "name": "project-bugs",
+      "path": "__FIRST_PROJECT_BUGS__",
+      "waitFor": "text=Bugs"
+    },
+    {
+      "name": "project-settings",
+      "path": "__FIRST_PROJECT_SETTINGS__",
+      "waitFor": "text=Project settings"
+    },
+    {
+      "name": "users",
+      "path": "/users",
+      "waitFor": "text=System users"
+    },
+    {
+      "name": "api-docs",
+      "path": "/api",
+      "mode": "spa",
+      "waitFor": "text=Interactive API docs"
+    },
+    {
+      "name": "mcp-docs",
+      "path": "/mcp",
+      "mode": "spa",
+      "waitFor": "text=Agilerr exposes MCP over HTTP"
+    }
+  ]
+}
