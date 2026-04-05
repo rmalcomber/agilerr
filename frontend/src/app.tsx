@@ -18,6 +18,7 @@ import {
   LogOut,
   Pencil,
   Plus,
+  Search,
   Sparkles,
   Settings2,
   SquarePen,
@@ -166,6 +167,7 @@ type AIAddModalState = {
 
 type AppRoute =
   | { kind: 'root' }
+  | { kind: 'docs' }
   | { kind: 'api' }
   | { kind: 'deleted' }
   | { kind: 'mcp' }
@@ -411,6 +413,7 @@ export default function App() {
 
   const selectedProjectId = route.kind === 'project' ? route.projectId : route.kind === 'api' ? apiProjectId : null
   const activePage = route.kind === 'project' ? route.view : null
+  const docsPageActive = route.kind === 'docs'
   const apiPageActive = route.kind === 'api' || activePage === 'api'
   const mcpPageActive = route.kind === 'mcp'
   const deletedPageActive = route.kind === 'deleted'
@@ -1543,6 +1546,12 @@ export default function App() {
                     </button>
                   </li>
                 )}
+                <li>
+                  <button class={`${docsPageActive ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(docsPath())} title="Docs" aria-label="Docs">
+                    <BookOpen size={16} />
+                    {!sidebarCollapsed && <span>Docs</span>}
+                  </button>
+                </li>
                 {currentUser?.systemAdmin && (
                   <li>
                     <button class={`${mcpPageActive ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(mcpPath())} title="MCP" aria-label="MCP">
@@ -1601,6 +1610,8 @@ export default function App() {
               onOpen={(projectId) => navigate(projectDashboardPath(projectId))}
             />
           )}
+
+          {route.kind === 'docs' && <DocsFaqPage />}
 
           {route.kind === 'api' && currentUser.systemAdmin && (
             <>
@@ -4096,6 +4107,156 @@ function ApiDocsPage(props: { project: Project; projects: Project[]; units: Unit
   )
 }
 
+type DocsEntry = {
+  title: string
+  body: string
+  tags: string[]
+  permissions: string[]
+}
+
+const docsEntries: DocsEntry[] = [
+  {
+    title: 'Signing in',
+    body: 'Accounts are created by a system admin. Sign in with the email and temporary password you were given. If the account is marked for first-use rotation, Agilerr will block the app until you set a new password.',
+    tags: ['auth', 'login', 'password'],
+    permissions: [],
+  },
+  {
+    title: 'Projects and membership',
+    body: 'Projects are only visible when you are a member of them. Membership also defines what you can do inside that project, such as viewing backlog items, editing work, deleting items, using AI Add, or changing project settings.',
+    tags: ['projects', 'membership', 'visibility'],
+    permissions: ['View Projects'],
+  },
+  {
+    title: 'Backlog hierarchy',
+    body: 'Business planning follows a strict hierarchy: Project -> Epic -> Feature -> User Story -> Task. Bugs are separate from this tree and live on the project-wide Bugs page. Tasks are intended for delivery teams and are never AI-generated.',
+    tags: ['backlog', 'hierarchy', 'bugs'],
+    permissions: ['View Units'],
+  },
+  {
+    title: 'Backlog filters',
+    body: 'Use the type filter to show only epics, features, stories, or tasks. Use the tag filter bar to narrow the tree by tags. When lower levels are selected without their parents, Agilerr keeps the missing levels visible as faded structural nodes so the context still makes sense.',
+    tags: ['backlog', 'filters', 'tags'],
+    permissions: ['View Units'],
+  },
+  {
+    title: 'Kanban boards',
+    body: 'Kanban pages show only the direct children for the current context. The project board shows epics, an epic page shows features, a feature page shows stories, and a story page shows tasks. Drag cards between lanes to update status quickly.',
+    tags: ['kanban', 'status', 'drag-drop'],
+    permissions: ['View Units', 'Edit Units'],
+  },
+  {
+    title: 'Comments, tags, and mentions',
+    body: 'Each item supports markdown comments, free-text tags, and mentions for users or other items. Viewing an item also allows viewing its comments. Editing permissions are required to add or change content.',
+    tags: ['comments', 'mentions', 'markdown'],
+    permissions: ['View Units', 'Edit Units'],
+  },
+  {
+    title: 'Assigned work',
+    body: 'Items can be assigned to a user from the add/edit form. The dashboard includes an Assigned to you section with the same type filtering pattern as the backlog, making it easy to focus on only the kinds of work you care about.',
+    tags: ['assignee', 'dashboard', 'workload'],
+    permissions: ['View Units'],
+  },
+  {
+    title: 'AI Add',
+    body: 'AI Add opens a planning conversation that helps flesh out projects, epics, features, user stories, or bugs. It can suggest multiple sibling items, support one extra generation level when enabled, and stores compact planning history against the project or parent context for future sessions.',
+    tags: ['ai', 'planning', 'openai'],
+    permissions: ['Add with AI'],
+  },
+  {
+    title: 'Deleting and recovery',
+    body: 'Deleting a project or item is soft by default. Agilerr shows a preview of the full child title list before deletion. System admins can review the Deleted page and permanently purge selected records after confirming a friendly safety phrase.',
+    tags: ['delete', 'archive', 'recovery'],
+    permissions: ['Delete Units', 'Project Admin', 'System Admin'],
+  },
+  {
+    title: 'Creating and editing projects',
+    body: 'Project creation is controlled separately from project editing. A user can be allowed to create new projects globally, while per-project permissions control whether they can edit metadata or change settings for a specific project.',
+    tags: ['projects', 'settings', 'admin'],
+    permissions: ['Create Projects', 'Edit Projects', 'Edit Project Settings'],
+  },
+  {
+    title: 'Project admin and system admin',
+    body: 'Project Admin grants full project-level access for that project, including unit changes and settings. System Admin is instance-wide: it unlocks user management, deleted-item purge, API docs, MCP docs, and all project capabilities.',
+    tags: ['permissions', 'admin', 'system'],
+    permissions: ['Project Admin', 'System Admin'],
+  },
+  {
+    title: 'Users and temporary passwords',
+    body: 'Only system admins can create users, assign project memberships, edit permissions, or reset passwords. Newly created users receive a temporary password and must change it before they can access the rest of the application.',
+    tags: ['users', 'permissions', 'password'],
+    permissions: ['System Admin'],
+  },
+  {
+    title: 'Keyboard shortcuts',
+    body: 'Use Ctrl+A or Cmd+A to open the contextual add flow. Use Ctrl+Shift+A or Cmd+Shift+A for contextual AI Add when allowed. Press ? to open the shortcuts help, Escape to close panels, and use the G-prefixed navigation shortcuts to jump around quickly.',
+    tags: ['keyboard', 'shortcuts', 'navigation'],
+    permissions: [],
+  },
+]
+
+function DocsFaqPage() {
+  const [query, setQuery] = useState('')
+  const normalized = query.trim().toLowerCase()
+  const visibleEntries = docsEntries.filter((entry) => {
+    if (!normalized) return true
+    const haystack = [entry.title, entry.body, ...entry.tags, ...entry.permissions].join(' ').toLowerCase()
+    return haystack.includes(normalized)
+  })
+
+  return (
+    <section class="space-y-5">
+      <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">Docs</p>
+        <h1 class="mt-2 text-2xl font-black">How to use Agilerr</h1>
+        <p class="mt-2 max-w-3xl text-sm text-base-content/85">Search across the FAQ to find guidance on backlog structure, permissions, AI Add, user management, and everyday project workflows.</p>
+        <div class="mt-4 flex items-center gap-3 rounded-xl border border-base-300 bg-base-100 px-3 py-2">
+          <Search size={16} class="text-base-content/70" />
+          <input
+            class="input input-ghost h-9 min-h-9 flex-1 px-0 text-sm focus:outline-none"
+            placeholder="Search docs, tags, or permission names"
+            value={query}
+            onInput={(event) => setQuery((event.currentTarget as HTMLInputElement).value)}
+          />
+          {!!query && (
+            <button class="btn btn-ghost btn-xs" onClick={() => setQuery('')}>
+              Clear
+            </button>
+          )}
+        </div>
+      </section>
+
+      <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+        <div class="flex items-center justify-between gap-3">
+          <h2 class="text-lg font-bold">FAQ</h2>
+          <span class="text-xs text-base-content/75">{visibleEntries.length} articles</span>
+        </div>
+        <div class="mt-4 space-y-4">
+          {visibleEntries.map((entry) => (
+            <article class="rounded-xl border border-base-300 bg-base-100 p-4">
+              <h3 class="text-base font-semibold">{entry.title}</h3>
+              <p class="mt-2 text-sm leading-6 text-base-content/85">{entry.body}</p>
+              <div class="mt-3 flex flex-wrap gap-2">
+                {entry.tags.map((tag) => (
+                  <span class="badge badge-outline border-base-content/30 text-base-content/90">{tag}</span>
+                ))}
+                {entry.permissions.length ? (
+                  entry.permissions.map((permission) => (
+                    <span class="badge badge-primary badge-outline">{permission}</span>
+                  ))
+                ) : (
+                  <span class="badge badge-ghost">No special access</span>
+                )}
+              </div>
+            </article>
+          ))}
+          {!visibleEntries.length && <div class="rounded-xl border border-dashed border-base-300 p-6 text-sm text-base-content/80">No docs matched that search.</div>}
+        </div>
+      </section>
+    </section>
+  )
+}
+
 function ApiEndpointCard(props: {
   endpoint: {
     key: string
@@ -4355,6 +4516,7 @@ function parseRoute(pathname: string): AppRoute {
   const segments = (trimmed || '/').split('/').filter(Boolean)
 
   if (!segments.length) return { kind: 'root' }
+  if (segments[0] === 'docs' && segments.length === 1) return { kind: 'docs' }
   if (segments[0] === 'api' && segments.length === 1) return { kind: 'api' }
   if (segments[0] === 'users' && segments.length === 1) return { kind: 'users' }
   if (segments[0] === 'deleted' && segments.length === 1) return { kind: 'deleted' }
@@ -4440,6 +4602,10 @@ function projectBacklogPath(projectId: string) {
 
 function apiPath() {
   return '/api'
+}
+
+function docsPath() {
+  return '/docs'
 }
 
 function usersPath() {
