@@ -8,6 +8,7 @@ EMBED_DIR="$BACKEND_DIR/web/dist"
 OUTPUT_DIR="$ROOT_DIR/output"
 OUTPUT_BIN="$OUTPUT_DIR/agilerr"
 WEBSITE_DOWNLOADS_DIR="$ROOT_DIR/website/static/downloads"
+RELEASE_README="$ROOT_DIR/RELEASE_README.md"
 VERSION="${AGILERR_VERSION:-$(git -C "$ROOT_DIR" describe --tags --always --dirty 2>/dev/null || echo dev)}"
 RELEASE_DIR="$OUTPUT_DIR/$VERSION"
 TARGETS=(
@@ -54,7 +55,7 @@ build_target() {
     go build -tags embedui -ldflags "-X 'main.BinaryVersion=$VERSION'" -o "$staged_binary" .
   popd >/dev/null
 
-  cp "$ROOT_DIR/README.md" "$staging_dir/README.md"
+  cp "$RELEASE_README" "$staging_dir/README.md"
 
   pushd "$RELEASE_DIR" >/dev/null
   if [[ "$archive_format" == "zip" ]]; then
