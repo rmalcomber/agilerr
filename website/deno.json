@@ -56,5 +56,9 @@
     "types": [
       "vite/client"
     ]
+  },
+  "deploy": {
+    "org": "rmalcomber",
+    "app": "agilerr"
   }
 }
