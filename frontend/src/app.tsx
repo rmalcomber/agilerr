@@ -21,6 +21,7 @@ import {
   Sparkles,
   Settings2,
   SquarePen,
+  Tag,
   Trash2,
   X,
 } from 'lucide-preact'
@@ -118,6 +119,7 @@ const defaultStatusColors: StatusColors = {
 const storageKeys = {
   lastProjectId: 'agilerr:last-project-id',
   backlogTypes: 'agilerr:backlog-types',
+  backlogTags: 'agilerr:backlog-tags',
   assignedTypes: 'agilerr:assigned-types',
   sidebarCollapsed: 'agilerr:sidebar-collapsed',
   bugsView: 'agilerr:bugs-view',
@@ -283,6 +285,20 @@ function readStoredStringArray<T extends string>(key: string, allowed: readonly 
   }
 }
 
+function readStoredFreeStringArray(key: string, fallback: string[]) {
+  if (typeof window === 'undefined') return fallback
+  const raw = window.localStorage.getItem(key)
+  if (!raw) return fallback
+  try {
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return fallback
+    const filtered = parsed.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    return filtered.length ? filtered : fallback
+  } catch {
+    return fallback
+  }
+}
+
 function readStoredBugsView() {
   if (typeof window === 'undefined') return 'kanban' as const
   const raw = window.localStorage.getItem(storageKeys.bugsView)
@@ -321,6 +337,7 @@ export default function App() {
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
   const [backlogFilterOpen, setBacklogFilterOpen] = useState(false)
   const [backlogTypes, setBacklogTypes] = useState<UnitType[]>(() => readStoredStringArray(storageKeys.backlogTypes, ['epic', 'feature', 'story', 'task'] as const, ['epic', 'feature', 'story', 'task']))
+  const [backlogTags, setBacklogTags] = useState<string[]>(() => readStoredFreeStringArray(storageKeys.backlogTags, []))
   const [assignedFilterOpen, setAssignedFilterOpen] = useState(false)
   const [assignedTypes, setAssignedTypes] = useState<UnitType[]>(() => readStoredStringArray(storageKeys.assignedTypes, ['epic', 'feature', 'story', 'task'] as const, ['epic', 'feature', 'story', 'task']))
   const [commentBody, setCommentBody] = useState('')
@@ -379,6 +396,10 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem(storageKeys.backlogTypes, JSON.stringify(backlogTypes))
   }, [backlogTypes])
+
+  useEffect(() => {
+    window.localStorage.setItem(storageKeys.backlogTags, JSON.stringify(backlogTags))
+  }, [backlogTags])
 
   useEffect(() => {
     window.localStorage.setItem(storageKeys.assignedTypes, JSON.stringify(assignedTypes))
@@ -475,9 +496,10 @@ export default function App() {
     return map
   }, [standardUnits])
   const backlogSelection = useMemo(() => new Set(backlogTypes), [backlogTypes])
+  const backlogTagSelection = useMemo(() => new Set(backlogTags), [backlogTags])
   const backlogNodes = useMemo(() => {
-    return (treeByParent.get('root') || []).flatMap((unit) => buildBacklogNodes(unit, treeByParent, backlogSelection, false))
-  }, [treeByParent, backlogSelection])
+    return (treeByParent.get('root') || []).flatMap((unit) => buildBacklogNodes(unit, treeByParent, backlogSelection, backlogTagSelection, false))
+  }, [treeByParent, backlogSelection, backlogTagSelection])
   const routeContext = useMemo<RouteContext | null>(() => {
     if (route.kind !== 'project') return null
     return resolveRouteContext(route, unitById)
@@ -1624,11 +1646,12 @@ export default function App() {
             <>
               {route.view === 'backlog' && (
                 <>
-                  <ProjectHero project={tree.project} tags={tree.tags} onEdit={() => navigate(projectSettingsPath(tree.project.id))} onAddPrimary={() => openNewUnit(tree.project.id)} onAddAI={() => void openAIAdd(tree.project.id, 'epic')} openAIConfigured={apiDocsConfig.openAIConfigured} addLabel="Add epic" addTitle="Add epic" aiTitle="AI Add epics" aiTargetType="epic" canEdit={selectedProjectPermissions.editProjectSettings || selectedProjectPermissions.projectAdmin} canAdd={selectedProjectPermissions.editUnits} canAddAI={selectedProjectPermissions.addWithAI} />
+                  <ProjectHero project={tree.project} tags={tree.project.tags} onEdit={() => navigate(projectSettingsPath(tree.project.id))} onAddPrimary={() => openNewUnit(tree.project.id)} onAddAI={() => void openAIAdd(tree.project.id, 'epic')} openAIConfigured={apiDocsConfig.openAIConfigured} addLabel="Add epic" addTitle="Add epic" aiTitle="AI Add epics" aiTargetType="epic" canEdit={selectedProjectPermissions.editProjectSettings || selectedProjectPermissions.projectAdmin} canAdd={selectedProjectPermissions.editUnits} canAddAI={selectedProjectPermissions.addWithAI} />
                   <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-4 shadow-panel">
                     <div class="mb-4 flex items-center justify-between">
                       <h2 class="text-lg font-bold">Backlog</h2>
                       <div class="flex items-center gap-3">
+                        <BacklogTagFilterBar availableTags={tree.tags} selectedTags={backlogTags} onChange={setBacklogTags} />
                         <div class="relative" ref={backlogFilterRef}>
                           <button
                             ref={backlogFilterButtonRef}
@@ -3005,7 +3028,7 @@ function KanbanRoutePage(props: {
           </section>
         </>
       ) : (
-        <ProjectHero project={props.project} tags={props.allTags} onEdit={props.onEditProject} onAddPrimary={props.onAddEpic} onAddAI={props.onAddAIEpic} openAIConfigured={props.openAIConfigured} addLabel="Add epic" addTitle="Add epic" aiTitle="AI Add epics" aiTargetType="epic" canEdit={props.canEditProject} canAdd={props.canAddEpic} canAddAI={props.canAddAIEpic} />
+        <ProjectHero project={props.project} tags={props.project.tags} onEdit={props.onEditProject} onAddPrimary={props.onAddEpic} onAddAI={props.onAddAIEpic} openAIConfigured={props.openAIConfigured} addLabel="Add epic" addTitle="Add epic" aiTitle="AI Add epics" aiTargetType="epic" canEdit={props.canEditProject} canAdd={props.canAddEpic} canAddAI={props.canAddAIEpic} />
       )}
 
       {!taskUnit && (
@@ -3789,19 +3812,96 @@ function CompactDescription(props: { source: string }) {
   )
 }
 
-function buildBacklogNodes(unit: Unit, treeByParent: Map<string, Unit[]>, selectedTypes: Set<UnitType>, hasVisibleAncestor: boolean): BacklogDisplayNode[] {
-  const selected = selectedTypes.has(unit.type)
-  const children = (treeByParent.get(unit.id) || []).flatMap((child) => buildBacklogNodes(child, treeByParent, selectedTypes, hasVisibleAncestor || selected))
+function buildBacklogNodes(unit: Unit, treeByParent: Map<string, Unit[]>, selectedTypes: Set<UnitType>, selectedTags: Set<string>, hasVisibleAncestor: boolean): BacklogDisplayNode[] {
+  const matchesType = selectedTypes.has(unit.type)
+  const matchesTags = !selectedTags.size || unit.tags.some((tag) => selectedTags.has(tag))
+  const selected = matchesType && matchesTags
+  const children = (treeByParent.get(unit.id) || []).flatMap((child) => buildBacklogNodes(child, treeByParent, selectedTypes, selectedTags, hasVisibleAncestor || selected))
   if (selected) {
     return [{ unit, implicit: false, children }]
   }
   if (!children.length) {
     return []
   }
-  if (hasVisibleAncestor) {
+  if (hasVisibleAncestor || (matchesType && selectedTags.size > 0)) {
     return [{ unit, implicit: true, children }]
   }
   return children
+}
+
+function BacklogTagFilterBar(props: { availableTags: string[]; selectedTags: string[]; onChange: (tags: string[]) => void }) {
+  const [input, setInput] = useState('')
+  const normalized = input.trim().toLowerCase()
+  const visibleTags = props.availableTags.filter((tag) => !normalized || tag.toLowerCase().includes(normalized))
+
+  function addTag(tag: string) {
+    const next = tag.trim()
+    if (!next || props.selectedTags.includes(next)) return
+    props.onChange([...props.selectedTags, next])
+    setInput('')
+  }
+
+  function toggleTag(tag: string) {
+    if (props.selectedTags.includes(tag)) {
+      props.onChange(props.selectedTags.filter((item) => item !== tag))
+      return
+    }
+    props.onChange([...props.selectedTags, tag])
+  }
+
+  return (
+    <div class="flex items-center gap-2 rounded-xl border border-base-300 bg-base-100/80 px-2 py-1.5">
+      <Tag size={14} class="text-base-content/70" />
+      <div class="flex min-w-[16rem] flex-1 flex-wrap items-center gap-1">
+        {props.selectedTags.map((tag) => (
+          <button class="badge badge-primary gap-1 px-2.5 py-2" type="button" onClick={() => props.onChange(props.selectedTags.filter((item) => item !== tag))} title={`Remove ${tag}`} aria-label={`Remove ${tag}`}>
+            <span>{tag}</span>
+            <X size={12} />
+          </button>
+        ))}
+        <input
+          class="input input-ghost input-xs h-7 min-h-7 w-36 px-1 text-sm focus:outline-none"
+          placeholder={props.selectedTags.length ? 'Add tag filter' : 'Filter tags'}
+          value={input}
+          onInput={(event) => setInput((event.currentTarget as HTMLInputElement).value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ',') {
+              event.preventDefault()
+              addTag(input)
+            }
+            if (event.key === 'Backspace' && !input && props.selectedTags.length) {
+              props.onChange(props.selectedTags.slice(0, -1))
+            }
+          }}
+        />
+      </div>
+      {props.selectedTags.length > 0 && (
+        <button class="btn btn-ghost btn-xs h-7 min-h-7 px-2 text-xs" type="button" onClick={() => props.onChange([])}>
+          Clear
+        </button>
+      )}
+      <div class="dropdown dropdown-end">
+        <div tabindex={0} role="button" class="btn btn-ghost btn-xs h-7 min-h-7 px-2 text-xs">
+          Tags
+        </div>
+        <div tabindex={0} class="dropdown-content z-20 mt-2 w-64 rounded-xl border border-base-300 bg-base-100 p-2 shadow-xl">
+          <div class="mb-2 px-2 text-xs font-semibold uppercase tracking-[0.2em] text-base-content/75">All backlog tags</div>
+          <div class="max-h-52 space-y-1 overflow-auto">
+            {visibleTags.map((tag) => {
+              const checked = props.selectedTags.includes(tag)
+              return (
+                <label class="flex cursor-pointer items-center justify-between rounded-lg px-3 py-2 text-sm transition hover:bg-base-200">
+                  <span>{tag}</span>
+                  <input class="checkbox checkbox-xs" type="checkbox" checked={checked} onChange={() => toggleTag(tag)} />
+                </label>
+              )
+            })}
+            {!visibleTags.length && <div class="rounded-lg border border-dashed border-base-300 px-3 py-2 text-xs text-base-content/75">No tags match that search.</div>}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function countBacklogNodes(nodes: BacklogDisplayNode[]): number {
