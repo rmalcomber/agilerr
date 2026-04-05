@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+backend/pb_data
+output
+website/_fresh
+website/node_modules
+frontend/node_modules
+frontend/dist
+tools/faq-capture/node_modules
+tools/faq-capture/output
