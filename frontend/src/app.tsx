@@ -942,9 +942,9 @@ export default function App() {
   const projectRouteInvalid = route.kind === 'project' && route.view === 'kanban' && routeContext?.invalid
 
   return (
-    <div class="min-h-screen bg-[radial-gradient(circle_at_top,#1e293b,transparent_20%),linear-gradient(180deg,#0f172a_0%,#111827_100%)] text-base-content">
-      <div class={`grid min-h-screen ${sidebarCollapsed ? 'lg:grid-cols-[88px,1fr]' : 'lg:grid-cols-[260px,1fr]'}`}>
-        <aside class={`flex flex-col border-r border-base-300/50 bg-base-100/75 backdrop-blur ${sidebarCollapsed ? 'items-center px-3 py-4' : 'p-4'}`}>
+    <div class="h-screen overflow-hidden bg-[radial-gradient(circle_at_top,#1e293b,transparent_20%),linear-gradient(180deg,#0f172a_0%,#111827_100%)] text-base-content">
+      <div class={`grid h-screen overflow-hidden ${sidebarCollapsed ? 'lg:grid-cols-[88px,1fr]' : 'lg:grid-cols-[260px,1fr]'}`}>
+        <aside class={`flex h-screen min-h-0 flex-col overflow-hidden border-r border-base-300/50 bg-base-100/75 backdrop-blur ${sidebarCollapsed ? 'items-center px-3 py-4' : 'p-4'}`}>
           <div>
             <div class={`flex gap-2 ${sidebarCollapsed ? 'w-full flex-col items-center' : 'items-start justify-between'}`}>
               <button class={`min-w-0 ${sidebarCollapsed ? 'text-center' : 'text-left'}`} onClick={() => navigate('/')} title="Go to projects" aria-label="Go to projects">
@@ -962,7 +962,7 @@ export default function App() {
             </div>
           </div>
 
-          <div class={`mt-5 ${sidebarCollapsed ? 'w-full' : ''}`}>
+          <div class={`mt-5 shrink-0 ${sidebarCollapsed ? 'w-full' : ''}`}>
             <div class="relative" ref={projectMenuRef}>
               <button
                 ref={projectMenuButtonRef}
@@ -1030,7 +1030,7 @@ export default function App() {
             </div>
           </div>
 
-          <nav class={`mt-5 ${sidebarCollapsed ? 'w-full' : ''}`}>
+          <nav class={`mt-5 min-h-0 flex-1 overflow-y-auto ${sidebarCollapsed ? 'w-full' : ''}`}>
             <ul class={`menu rounded-box bg-base-100/75 p-2 ${sidebarCollapsed ? 'items-center' : ''}`}>
               {selectedProjectId && (
                 <>
@@ -1093,7 +1093,7 @@ export default function App() {
             </div>
           </nav>
 
-          <div class={`mt-auto rounded-xl border border-base-300 bg-base-100 p-3 ${sidebarCollapsed ? 'w-full max-w-[56px]' : ''}`}>
+          <div class={`mt-4 shrink-0 rounded-xl border border-base-300 bg-base-100 p-3 ${sidebarCollapsed ? 'w-full max-w-[56px]' : ''}`}>
             <div class={`flex items-center gap-3 ${sidebarCollapsed ? 'justify-center' : ''}`}>
               <img class="h-10 w-10 rounded-full ring-2 ring-base-300" src={currentUser.gravatar || gravatar(currentUser.email)} alt={currentUser.name} />
               {!sidebarCollapsed && (
@@ -1110,7 +1110,7 @@ export default function App() {
           </div>
         </aside>
 
-        <main class="p-4 sm:p-5">
+        <main class="h-screen overflow-y-auto p-4 sm:p-5">
           {error && <div class="alert alert-error mb-4">{error}</div>}
 
           {route.kind === 'root' && (
@@ -2151,7 +2151,7 @@ function KanbanBoard(props: {
 
           return (
             <div
-              class="rounded-xl border border-base-300 bg-base-200/60 p-2.5"
+              class="flex min-h-[18rem] max-h-[calc(100vh-20rem)] flex-col rounded-xl border border-base-300 bg-base-200/60 p-2.5"
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => {
                 event.preventDefault()
@@ -2159,11 +2159,11 @@ function KanbanBoard(props: {
                 if (unitId) props.onMoveUnit(unitId, status.key)
               }}
             >
-              <div class="mb-3 flex items-center justify-between">
+              <div class="mb-3 shrink-0 flex items-center justify-between">
                 <span class="font-semibold">{status.label}</span>
                 <span class="badge">{laneUnits.length}</span>
               </div>
-              <div class="space-y-3">
+              <div class="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
                 {laneUnits.map((unit) => (
                   <UnitKanbanCard project={props.project} userById={props.userById} unit={unit} onOpenRoute={props.onOpenRoute} onOpenDetails={props.onOpenDetails} />
                 ))}

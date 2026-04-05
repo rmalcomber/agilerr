@@ -10,6 +10,7 @@
 }
 
 html {
+  height: 100%;
   scroll-behavior: smooth;
 }
 
@@ -17,7 +18,13 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  height: 100%;
   background: #0f172a;
+  overflow: hidden;
+}
+
+#app {
+  height: 100%;
 }
 
 * {
