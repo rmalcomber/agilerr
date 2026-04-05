@@ -9,13 +9,14 @@ RUN npm run build
 
 FROM golang:1.25 AS build
 WORKDIR /src/backend
+ARG AGILERR_VERSION=dev
 
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 
 COPY backend ./
 COPY --from=frontend-build /frontend/dist ./web/dist
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags embedui -o /out/agilerr .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags embedui -ldflags "-X main.BinaryVersion=${AGILERR_VERSION}" -o /out/agilerr .
 
 FROM debian:bookworm-slim
 WORKDIR /app

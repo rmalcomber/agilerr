@@ -16,6 +16,11 @@ import (
 func main() {
 	_ = godotenv.Load()
 
+	if len(os.Args) > 1 && strings.TrimSpace(os.Args[1]) == "version" {
+		log.Printf("Agilerr %s (schema %d)", normalizedBinaryVersion(), appSchemaVersion)
+		return
+	}
+
 	cfg := loadConfig()
 	app := pocketbase.NewWithConfig(pocketbase.Config{
 		DefaultDataDir: cfg.DataDir,
@@ -32,6 +37,10 @@ func main() {
 	}
 
 	if err := service.EnsureSchema(); err != nil {
+		log.Fatal(err)
+	}
+
+	if err := service.EnsureDatabaseVersion(); err != nil {
 		log.Fatal(err)
 	}
 
@@ -56,6 +65,7 @@ func main() {
 		return e.Next()
 	})
 
+	log.Printf("Agilerr %s (schema %d)", normalizedBinaryVersion(), appSchemaVersion)
 	log.Printf("Agilerr backend listening on %s", cfg.HTTPAddr)
 	if cfg.GeneratedHTTPAddr {
 		log.Printf("HTTP_ADDR was not set. Generated local default: %s", cfg.HTTPAddr)

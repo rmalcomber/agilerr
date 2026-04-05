@@ -60,6 +60,14 @@ func (s *AgilerrService) EnsureSchema() error {
 	if err != nil {
 		return err
 	}
+	if err := s.app.ReloadCachedCollections(); err != nil {
+		return err
+	}
+
+	_, err = s.ensureAppMetaCollection()
+	if err != nil {
+		return err
+	}
 	return s.app.ReloadCachedCollections()
 }
 
@@ -253,6 +261,27 @@ func (s *AgilerrService) ensureAIPlanMessagesCollection() (*core.Collection, err
 		&core.TextField{Name: "session", Required: true, Min: 1, Max: 32},
 		&core.TextField{Name: "role", Required: true, Min: 1, Max: 32},
 		&core.TextField{Name: "content", Required: true, Min: 1, Max: 20000},
+	)
+
+	return col, s.app.Save(col)
+}
+
+func (s *AgilerrService) ensureAppMetaCollection() (*core.Collection, error) {
+	col, err := s.app.FindCollectionByNameOrId(collectionAppMeta)
+	if err != nil {
+		col = core.NewBaseCollection(collectionAppMeta)
+	} else if col.Type != core.CollectionTypeBase {
+		return nil, errors.New("app meta collection exists with an incompatible type")
+	}
+
+	col.ListRule = nil
+	col.ViewRule = nil
+	col.CreateRule = nil
+	col.UpdateRule = nil
+	col.DeleteRule = nil
+	col.Fields.Add(
+		&core.TextField{Name: "key", Required: true, Min: 1, Max: 120},
+		&core.TextField{Name: "value", Required: true, Max: 2000},
 	)
 
 	return col, s.app.Save(col)

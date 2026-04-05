@@ -7,6 +7,7 @@ BACKEND_DIR="$ROOT_DIR/backend"
 EMBED_DIR="$BACKEND_DIR/web/dist"
 OUTPUT_DIR="$ROOT_DIR/output"
 OUTPUT_BIN="$OUTPUT_DIR/agilerr"
+VERSION="${AGILERR_VERSION:-$(git -C "$ROOT_DIR" describe --tags --always --dirty 2>/dev/null || echo dev)}"
 
 rm -rf "$EMBED_DIR"
 mkdir -p "$EMBED_DIR"
@@ -20,7 +21,7 @@ popd >/dev/null
 cp -R "$FRONTEND_DIR/dist/." "$EMBED_DIR/"
 
 pushd "$BACKEND_DIR" >/dev/null
-go build -tags embedui -o "$OUTPUT_BIN" .
+go build -tags embedui -ldflags "-X 'main.BinaryVersion=$VERSION'" -o "$OUTPUT_BIN" .
 popd >/dev/null
 
-echo "Built release binary at $OUTPUT_BIN"
+echo "Built Agilerr $VERSION at $OUTPUT_BIN"

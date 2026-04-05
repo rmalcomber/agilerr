@@ -20,6 +20,7 @@ const (
 	collectionMemberships    = "project_memberships"
 	collectionAIPlanSessions = "ai_plan_sessions"
 	collectionAIPlanMessages = "ai_plan_messages"
+	collectionAppMeta        = "app_meta"
 )
 
 var (
