@@ -98,6 +98,7 @@ func (s *AgilerrService) ensureProjectsCollection() (*core.Collection, error) {
 		&core.JSONField{Name: "tags"},
 		&core.JSONField{Name: "unitColors"},
 		&core.JSONField{Name: "statusColors"},
+		&core.TextField{Name: "deletedAt", Max: 64},
 	)
 
 	return col, s.app.Save(col)
@@ -137,6 +138,7 @@ func (s *AgilerrService) ensureUnitsCollection(_ string, _ string) (*core.Collec
 		&core.JSONField{Name: "tags"},
 		&core.NumberField{Name: "position"},
 		&core.TextField{Name: "createdBy", Max: 32},
+		&core.TextField{Name: "deletedAt", Max: 64},
 	)
 
 	return col, s.app.Save(col)

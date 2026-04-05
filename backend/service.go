@@ -21,6 +21,11 @@ type AgilerrService struct {
 	httpClient *http.Client
 }
 
+type HardDeleteRequest struct {
+	ProjectIDs []string `json:"projectIds"`
+	UnitIDs    []string `json:"unitIds"`
+}
+
 func (s *AgilerrService) EnsureAdmin() error {
 	if strings.TrimSpace(s.config.AdminEmail) == "" || strings.TrimSpace(s.config.AdminPassword) == "" {
 		return errors.New("admin credentials must be configured")
@@ -59,6 +64,83 @@ func (s *AgilerrService) EnsureAdmin() error {
 	return s.app.Save(adminUser)
 }
 
+func (s *AgilerrService) EnsureDemoData() error {
+	existingProjects, err := s.app.FindAllRecords(collectionProjects)
+	if err != nil {
+		return err
+	}
+	if len(existingProjects) > 0 {
+		return nil
+	}
+
+	adminUser, err := s.findAPIActor()
+	if err != nil {
+		return err
+	}
+
+	projectCollection, err := s.app.FindCollectionByNameOrId(collectionProjects)
+	if err != nil {
+		return err
+	}
+	projectRecord := core.NewRecord(projectCollection)
+	projectRecord.Set("name", "Demo Project")
+	projectRecord.Set("description", "Seeded example project for first-run exploration of backlog, kanban, bugs, and AI planning.")
+	projectRecord.Set("color", defaultProjectColor)
+	projectRecord.Set("tags", []string{"demo", "sample", "onboarding"})
+	projectRecord.Set("unitColors", normalizeUnitColors(nil))
+	projectRecord.Set("statusColors", normalizeStatusColors(nil))
+	projectRecord.Set("deletedAt", "")
+	if err := s.app.Save(projectRecord); err != nil {
+		return err
+	}
+	projectRecord = projectRecord.Fresh()
+
+	unitsCollection, err := s.app.FindCollectionByNameOrId(collectionUnits)
+	if err != nil {
+		return err
+	}
+
+	createSeedItem := func(parentID, unitType, status, title, description string, tags []string) (*core.Record, error) {
+		record := core.NewRecord(unitsCollection)
+		record.Set("project", projectRecord.Id)
+		record.Set("parent", parentID)
+		record.Set("type", unitType)
+		record.Set("status", status)
+		record.Set("title", title)
+		record.Set("description", description)
+		record.Set("color", projectColorForType(projectRecord, unitType))
+		record.Set("tags", normalizeTags(tags))
+		record.Set("position", float64(time.Now().UnixMilli()))
+		record.Set("createdBy", adminUser.Id)
+		record.Set("deletedAt", "")
+		if err := s.app.Save(record); err != nil {
+			return nil, err
+		}
+		return record.Fresh(), nil
+	}
+
+	epic, err := createSeedItem("", "epic", "in_progress", "Foundations and Delivery", "Core work to stand up Agilerr, validate the flow, and show how the hierarchy works.", []string{"platform", "mvp"})
+	if err != nil {
+		return err
+	}
+	feature, err := createSeedItem(epic.Id, "feature", "todo", "Board Navigation", "Create a clear path through dashboard, kanban, backlog, API, and MCP documentation.", []string{"ux", "navigation"})
+	if err != nil {
+		return err
+	}
+	story, err := createSeedItem(feature.Id, "story", "review", "As a scrum user I can understand project state quickly", "Show a dashboard with useful counts, assigned work, and fast entry points into the board and backlog.", []string{"dashboard", "workflow"})
+	if err != nil {
+		return err
+	}
+	if _, err := createSeedItem(story.Id, "task", "todo", "Tighten dashboard metrics", "Review the dashboard cards and make sure the counts and quick links feel useful during a demo.", []string{"dev", "polish"}); err != nil {
+		return err
+	}
+	if _, err := createSeedItem("", "bug", "triage", "Bug reports should start in triage", "Verify that new bugs stay out of the main backlog tree and enter the dedicated bug workflow in triage.", []string{"bugs", "triage"}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (s *AgilerrService) RegisterRoutes(e *core.ServeEvent) {
 	group := e.Router.Group("/api/agilerr").BindFunc(s.requireAPIAccess)
 	s.RegisterMCPRoutes(e)
@@ -67,6 +149,8 @@ func (s *AgilerrService) RegisterRoutes(e *core.ServeEvent) {
 	group.GET("/docs-config", s.handleDocsConfig)
 	group.GET("/projects", s.handleProjectsList)
 	group.POST("/projects", s.handleProjectCreate)
+	group.GET("/projects/{projectId}/delete-preview", s.handleProjectDeletePreview)
+	group.DELETE("/projects/{projectId}", s.handleProjectDelete)
 	group.GET("/projects/{projectId}", s.handleProjectTree)
 	group.PATCH("/projects/{projectId}", s.handleProjectUpdate)
 	group.GET("/projects/{projectId}/suggest", s.handleSuggestions)
@@ -79,9 +163,12 @@ func (s *AgilerrService) RegisterRoutes(e *core.ServeEvent) {
 	group.POST("/ai-plans/{sessionId}/apply", s.handleAIPlanApply)
 	group.PATCH("/units/{unitId}", s.handleUnitUpdate)
 	group.POST("/units/{unitId}/move", s.handleUnitMove)
+	group.GET("/units/{unitId}/delete-preview", s.handleUnitDeletePreview)
 	group.DELETE("/units/{unitId}", s.handleUnitDelete)
 	group.GET("/units/{unitId}/comments", s.handleCommentsList)
 	group.POST("/units/{unitId}/comments", s.handleCommentCreate)
+	group.GET("/deleted", s.handleDeletedList)
+	group.POST("/deleted/purge", s.handleDeletedPurge)
 }
 
 func (s *AgilerrService) requireAPIAccess(e *core.RequestEvent) error {
@@ -132,7 +219,7 @@ func (s *AgilerrService) handleDocsConfig(e *core.RequestEvent) error {
 }
 
 func (s *AgilerrService) handleProjectsList(e *core.RequestEvent) error {
-	records, err := s.app.FindRecordsByFilter(collectionProjects, "", "name", 0, 0)
+	records, err := s.app.FindRecordsByFilter(collectionProjects, "deletedAt = ''", "name", 0, 0)
 	if err != nil {
 		return serverError(e, err)
 	}
@@ -168,6 +255,7 @@ func (s *AgilerrService) handleProjectCreate(e *core.RequestEvent) error {
 	record.Set("tags", normalizeTags(req.Tags))
 	record.Set("unitColors", normalizeUnitColors(req.UnitColors))
 	record.Set("statusColors", normalizeStatusColors(req.StatusColors))
+	record.Set("deletedAt", "")
 
 	if err := s.app.Save(record); err != nil {
 		return badRequest(e, "failed to save project", err)
@@ -330,6 +418,7 @@ func (s *AgilerrService) handleUnitCreate(e *core.RequestEvent) error {
 	record.Set("tags", req.Tags)
 	record.Set("position", float64(time.Now().UnixMilli()))
 	record.Set("createdBy", e.Auth.Id)
+	record.Set("deletedAt", "")
 
 	if err := s.app.Save(record); err != nil {
 		return badRequest(e, "failed to save unit", err)
@@ -449,30 +538,130 @@ func (s *AgilerrService) handleUnitDelete(e *core.RequestEvent) error {
 	if err != nil {
 		return notFound(e, "unit not found")
 	}
-
-	children, err := s.app.FindAllRecords(collectionUnits, dbx.HashExp{"parent": unitRecord.Id})
-	if err != nil {
-		return serverError(e, err)
-	}
-	if len(children) > 0 {
-		return badRequest(e, "delete child units before deleting this unit", nil)
-	}
-
-	comments, err := s.app.FindAllRecords(collectionComments, dbx.HashExp{"unit": unitRecord.Id})
-	if err != nil {
-		return serverError(e, err)
-	}
-	for _, comment := range comments {
-		if err := s.app.Delete(comment); err != nil {
-			return serverError(e, err)
-		}
-	}
-
-	if err := s.app.Delete(unitRecord); err != nil {
+	if err := s.softDeleteUnitTree(unitRecord); err != nil {
 		return serverError(e, err)
 	}
 
 	return e.NoContent(http.StatusNoContent)
+}
+
+func (s *AgilerrService) handleProjectDeletePreview(e *core.RequestEvent) error {
+	projectRecord, err := findProject(s.app, e.Request.PathValue("projectId"))
+	if err != nil {
+		return notFound(e, "project not found")
+	}
+	unitRecords, err := loadProjectRecords(s.app, projectRecord.Id)
+	if err != nil {
+		return serverError(e, err)
+	}
+	childTitles := make([]string, 0, len(unitRecords))
+	for _, record := range unitRecords {
+		childTitles = append(childTitles, record.GetString("title"))
+	}
+	sort.Strings(childTitles)
+	return e.JSON(http.StatusOK, map[string]any{
+		"preview": DeletePreviewDTO{
+			ID:           projectRecord.Id,
+			Kind:         "project",
+			Title:        projectRecord.GetString("name"),
+			ChildTitles:  childTitles,
+			TotalDeleted: 1 + len(childTitles),
+		},
+	})
+}
+
+func (s *AgilerrService) handleProjectDelete(e *core.RequestEvent) error {
+	projectRecord, err := findProject(s.app, e.Request.PathValue("projectId"))
+	if err != nil {
+		return notFound(e, "project not found")
+	}
+	if err := s.softDeleteProject(projectRecord); err != nil {
+		return serverError(e, err)
+	}
+	return e.NoContent(http.StatusNoContent)
+}
+
+func (s *AgilerrService) handleUnitDeletePreview(e *core.RequestEvent) error {
+	unitRecord, err := findUnit(s.app, e.Request.PathValue("unitId"))
+	if err != nil {
+		return notFound(e, "item not found")
+	}
+	descendants, err := s.collectUnitDescendants(unitRecord.Id)
+	if err != nil {
+		return serverError(e, err)
+	}
+	childTitles := make([]string, 0, len(descendants))
+	for _, record := range descendants {
+		childTitles = append(childTitles, record.GetString("title"))
+	}
+	sort.Strings(childTitles)
+	return e.JSON(http.StatusOK, map[string]any{
+		"preview": DeletePreviewDTO{
+			ID:           unitRecord.Id,
+			Kind:         "unit",
+			Title:        unitRecord.GetString("title"),
+			ChildTitles:  childTitles,
+			TotalDeleted: 1 + len(childTitles),
+		},
+	})
+}
+
+func (s *AgilerrService) handleDeletedList(e *core.RequestEvent) error {
+	projectRecords, err := s.app.FindAllRecords(collectionProjects, dbx.Not(dbx.HashExp{"deletedAt": ""}))
+	if err != nil {
+		return serverError(e, err)
+	}
+	unitRecords, err := s.app.FindAllRecords(collectionUnits, dbx.Not(dbx.HashExp{"deletedAt": ""}))
+	if err != nil {
+		return serverError(e, err)
+	}
+	items := make([]DeletedItemDTO, 0, len(projectRecords)+len(unitRecords))
+	for _, record := range projectRecords {
+		items = append(items, DeletedItemDTO{ID: record.Id, Kind: "project", Title: record.GetString("name")})
+	}
+	for _, record := range unitRecords {
+		items = append(items, DeletedItemDTO{ID: record.Id, Kind: "unit", Title: record.GetString("title")})
+	}
+	sort.Slice(items, func(i, j int) bool { return strings.ToLower(items[i].Title) < strings.ToLower(items[j].Title) })
+	return e.JSON(http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *AgilerrService) handleDeletedPurge(e *core.RequestEvent) error {
+	var req HardDeleteRequest
+	if err := e.BindBody(&req); err != nil {
+		return badRequest(e, "invalid request body", err)
+	}
+
+	projectIDs := normalizeIDList(req.ProjectIDs)
+	unitIDs := normalizeIDList(req.UnitIDs)
+
+	for _, projectID := range projectIDs {
+		projectRecord, err := findProjectAny(s.app, projectID)
+		if err != nil {
+			continue
+		}
+		if !isDeleted(projectRecord) {
+			continue
+		}
+		if err := s.hardDeleteProject(projectRecord); err != nil {
+			return serverError(e, err)
+		}
+	}
+
+	for _, unitID := range unitIDs {
+		unitRecord, err := findUnitAny(s.app, unitID)
+		if err != nil {
+			continue
+		}
+		if !isDeleted(unitRecord) {
+			continue
+		}
+		if err := s.hardDeleteUnitTree(unitRecord); err != nil {
+			return serverError(e, err)
+		}
+	}
+
+	return e.JSON(http.StatusOK, map[string]any{"ok": true})
 }
 
 func (s *AgilerrService) handleCommentsList(e *core.RequestEvent) error {
@@ -625,4 +814,165 @@ func notFound(e *core.RequestEvent, message string) error {
 
 func serverError(e *core.RequestEvent, err error) error {
 	return e.JSON(http.StatusInternalServerError, map[string]any{"error": "internal server error", "details": err.Error()})
+}
+
+func normalizeIDList(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func deleteTimestamp() string {
+	return time.Now().UTC().Format(time.RFC3339)
+}
+
+func (s *AgilerrService) collectUnitDescendants(rootID string) ([]*core.Record, error) {
+	all, err := s.app.FindAllRecords(collectionUnits)
+	if err != nil {
+		return nil, err
+	}
+	childrenByParent := map[string][]*core.Record{}
+	for _, record := range all {
+		childrenByParent[record.GetString("parent")] = append(childrenByParent[record.GetString("parent")], record)
+	}
+	var descendants []*core.Record
+	var walk func(string)
+	walk = func(parentID string) {
+		for _, child := range childrenByParent[parentID] {
+			descendants = append(descendants, child)
+			walk(child.Id)
+		}
+	}
+	walk(rootID)
+	return descendants, nil
+}
+
+func (s *AgilerrService) softDeleteProject(projectRecord *core.Record) error {
+	unitRecords, err := s.app.FindAllRecords(collectionUnits, dbx.HashExp{"project": projectRecord.Id})
+	if err != nil {
+		return err
+	}
+	deletedAt := deleteTimestamp()
+	projectRecord.Set("deletedAt", deletedAt)
+	if err := s.app.Save(projectRecord); err != nil {
+		return err
+	}
+	for _, record := range unitRecords {
+		record.Set("deletedAt", deletedAt)
+		if err := s.app.SaveNoValidate(record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *AgilerrService) softDeleteUnitTree(unitRecord *core.Record) error {
+	descendants, err := s.collectUnitDescendants(unitRecord.Id)
+	if err != nil {
+		return err
+	}
+	deletedAt := deleteTimestamp()
+	unitRecord.Set("deletedAt", deletedAt)
+	if err := s.app.Save(unitRecord); err != nil {
+		return err
+	}
+	for _, record := range descendants {
+		record.Set("deletedAt", deletedAt)
+		if err := s.app.SaveNoValidate(record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *AgilerrService) hardDeleteProject(projectRecord *core.Record) error {
+	unitRecords, err := s.app.FindAllRecords(collectionUnits, dbx.HashExp{"project": projectRecord.Id})
+	if err != nil {
+		return err
+	}
+	unitIDs := make([]string, 0, len(unitRecords))
+	for _, record := range unitRecords {
+		unitIDs = append(unitIDs, record.Id)
+	}
+	commentRecords, err := loadProjectComments(s.app, unitIDs)
+	if err != nil {
+		return err
+	}
+	for _, comment := range commentRecords {
+		if err := s.app.Delete(comment); err != nil {
+			return err
+		}
+	}
+	sessions, err := s.app.FindAllRecords(collectionAIPlanSessions, dbx.HashExp{"project": projectRecord.Id})
+	if err != nil {
+		return err
+	}
+	for _, session := range sessions {
+		messages, err := s.app.FindAllRecords(collectionAIPlanMessages, dbx.HashExp{"session": session.Id})
+		if err != nil {
+			return err
+		}
+		for _, message := range messages {
+			if err := s.app.Delete(message); err != nil {
+				return err
+			}
+		}
+		if err := s.app.Delete(session); err != nil {
+			return err
+		}
+	}
+	for _, record := range unitRecords {
+		if err := s.app.Delete(record); err != nil {
+			return err
+		}
+	}
+	return s.app.Delete(projectRecord)
+}
+
+func (s *AgilerrService) hardDeleteUnitTree(unitRecord *core.Record) error {
+	allUnits, err := s.app.FindAllRecords(collectionUnits)
+	if err != nil {
+		return err
+	}
+	childrenByParent := map[string][]*core.Record{}
+	deleteIDs := map[string]bool{}
+	var deleteOrder []*core.Record
+	for _, record := range allUnits {
+		childrenByParent[record.GetString("parent")] = append(childrenByParent[record.GetString("parent")], record)
+	}
+	var walk func(*core.Record)
+	walk = func(record *core.Record) {
+		deleteIDs[record.Id] = true
+		for _, child := range childrenByParent[record.Id] {
+			walk(child)
+		}
+		deleteOrder = append(deleteOrder, record)
+	}
+	walk(unitRecord)
+
+	commentRecords, err := s.app.FindAllRecords(collectionComments)
+	if err != nil {
+		return err
+	}
+	for _, comment := range commentRecords {
+		if deleteIDs[comment.GetString("unit")] {
+			if err := s.app.Delete(comment); err != nil {
+				return err
+			}
+		}
+	}
+	for _, record := range deleteOrder {
+		if err := s.app.Delete(record); err != nil {
+			return err
+		}
+	}
+	return nil
 }

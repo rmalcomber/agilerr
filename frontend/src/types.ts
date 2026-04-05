@@ -86,6 +86,20 @@ export interface ApiDocsConfig {
 
 export type ProjectPage = 'dashboard' | 'backlog' | 'kanban' | 'bugs' | 'api' | 'settings'
 
+export interface DeletePreview {
+  id: string
+  kind: 'project' | 'unit'
+  title: string
+  childTitles: string[]
+  totalDeleted: number
+}
+
+export interface DeletedItem {
+  id: string
+  kind: 'project' | 'unit'
+  title: string
+}
+
 export interface AIPlanMessage {
   id: string
   sessionId: string

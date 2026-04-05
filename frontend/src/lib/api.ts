@@ -1,5 +1,5 @@
 import { pb } from './pocketbase'
-import type { AIPlanProposal, AIPlanState, AIProjectDraft, AIPlanChatMessage, ApiDocsConfig, Comment, Project, ProjectTree, Suggestions, Unit, User } from '../types'
+import type { AIPlanProposal, AIPlanState, AIProjectDraft, AIPlanChatMessage, ApiDocsConfig, Comment, DeletedItem, DeletePreview, Project, ProjectTree, Suggestions, Unit, User } from '../types'
 
 const apiBase = import.meta.env.VITE_API_URL || ''
 
@@ -31,6 +31,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  deleteProjectPreview: (projectId: string) => request<{ preview: DeletePreview }>(`/api/agilerr/projects/${projectId}/delete-preview`),
+  deleteProject: (projectId: string) =>
+    request<void>(`/api/agilerr/projects/${projectId}`, {
+      method: 'DELETE',
+    }),
   updateProject: (projectId: string, body: Partial<Project>) =>
     request<{ project: Project }>(`/api/agilerr/projects/${projectId}`, {
       method: 'PATCH',
@@ -49,6 +54,7 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),
+  deleteUnitPreview: (unitId: string) => request<{ preview: DeletePreview }>(`/api/agilerr/units/${unitId}/delete-preview`),
   moveUnit: (unitId: string, status: Unit['status']) =>
     request<{ unit: Unit }>(`/api/agilerr/units/${unitId}/move`, {
       method: 'POST',
@@ -60,6 +66,12 @@ export const api = {
     }),
   createComment: (unitId: string, body: Partial<Comment>) =>
     request<{ comment: Comment }>(`/api/agilerr/units/${unitId}/comments`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  deletedItems: () => request<{ items: DeletedItem[] }>('/api/agilerr/deleted'),
+  purgeDeleted: (body: { projectIds: string[]; unitIds: string[] }) =>
+    request<{ ok: boolean }>('/api/agilerr/deleted/purge', {
       method: 'POST',
       body: JSON.stringify(body),
     }),

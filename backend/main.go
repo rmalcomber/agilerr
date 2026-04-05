@@ -39,6 +39,10 @@ func main() {
 		log.Fatal(err)
 	}
 
+	if err := service.EnsureDemoData(); err != nil {
+		log.Fatal(err)
+	}
+
 	if len(os.Args) > 1 && strings.TrimSpace(os.Args[1]) == "mcp" {
 		if err := service.RunMCPServer(); err != nil {
 			log.Fatal(err)

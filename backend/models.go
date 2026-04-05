@@ -55,6 +55,7 @@ type ProjectDTO struct {
 	Tags         []string            `json:"tags"`
 	UnitColors   UnitColorSettings   `json:"unitColors"`
 	StatusColors StatusColorSettings `json:"statusColors"`
+	DeletedAt    string              `json:"deletedAt,omitempty"`
 	Created      time.Time           `json:"created"`
 	Updated      time.Time           `json:"updated"`
 }
@@ -73,8 +74,23 @@ type UnitDTO struct {
 	Tags        []string  `json:"tags"`
 	Position    float64   `json:"position"`
 	CreatedBy   string    `json:"createdBy"`
+	DeletedAt   string    `json:"deletedAt,omitempty"`
 	Created     time.Time `json:"created"`
 	Updated     time.Time `json:"updated"`
+}
+
+type DeletedItemDTO struct {
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	Title string `json:"title"`
+}
+
+type DeletePreviewDTO struct {
+	ID           string   `json:"id"`
+	Kind         string   `json:"kind"`
+	Title        string   `json:"title"`
+	ChildTitles  []string `json:"childTitles"`
+	TotalDeleted int      `json:"totalDeleted"`
 }
 
 type CommentDTO struct {
@@ -222,6 +238,7 @@ func recordToProject(record *core.Record) ProjectDTO {
 		Tags:         decodeStringSlice(record, "tags"),
 		UnitColors:   decodeUnitColors(record, "unitColors"),
 		StatusColors: decodeStatusColors(record, "statusColors"),
+		DeletedAt:    record.GetString("deletedAt"),
 		Created:      record.GetDateTime("created").Time(),
 		Updated:      record.GetDateTime("updated").Time(),
 	}
@@ -242,6 +259,7 @@ func recordToUnit(record *core.Record) UnitDTO {
 		Tags:        decodeStringSlice(record, "tags"),
 		Position:    record.GetFloat("position"),
 		CreatedBy:   record.GetString("createdBy"),
+		DeletedAt:   record.GetString("deletedAt"),
 		Created:     record.GetDateTime("created").Time(),
 		Updated:     record.GetDateTime("updated").Time(),
 	}
@@ -367,7 +385,7 @@ func loadAllUsers(app core.App) ([]*core.Record, error) {
 }
 
 func loadProjectRecords(app core.App, projectID string) ([]*core.Record, error) {
-	return app.FindAllRecords(collectionUnits, dbx.HashExp{"project": projectID})
+	return app.FindAllRecords(collectionUnits, dbx.HashExp{"project": projectID, "deletedAt": ""})
 }
 
 func loadProjectComments(app core.App, unitIDs []string) ([]*core.Record, error) {
@@ -392,10 +410,32 @@ func loadProjectComments(app core.App, unitIDs []string) ([]*core.Record, error)
 }
 
 func findProject(app core.App, projectID string) (*core.Record, error) {
-	return app.FindRecordById(collectionProjects, projectID)
+	record, err := app.FindRecordById(collectionProjects, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if isDeleted(record) {
+		return nil, sql.ErrNoRows
+	}
+	return record, nil
 }
 
 func findUnit(app core.App, unitID string) (*core.Record, error) {
+	record, err := app.FindRecordById(collectionUnits, unitID)
+	if err != nil {
+		return nil, err
+	}
+	if isDeleted(record) {
+		return nil, sql.ErrNoRows
+	}
+	return record, nil
+}
+
+func findProjectAny(app core.App, projectID string) (*core.Record, error) {
+	return app.FindRecordById(collectionProjects, projectID)
+}
+
+func findUnitAny(app core.App, unitID string) (*core.Record, error) {
 	return app.FindRecordById(collectionUnits, unitID)
 }
 
@@ -419,6 +459,9 @@ func validateHierarchy(parent *core.Record, req SaveUnitRequest) error {
 	if parent.GetString("project") != req.ProjectID {
 		return errors.New("parent belongs to a different project")
 	}
+	if isDeleted(parent) {
+		return errors.New("parent item has been deleted")
+	}
 	if parent.GetString("type") == "bug" {
 		return errors.New("bugs cannot have child items")
 	}
@@ -439,5 +482,15 @@ func fetchParent(app core.App, parentID string) (*core.Record, error) {
 		}
 		return nil, err
 	}
+	if isDeleted(parent) {
+		return nil, errors.New("parent item has been deleted")
+	}
 	return parent, nil
+}
+
+func isDeleted(record *core.Record) bool {
+	if record == nil {
+		return false
+	}
+	return strings.TrimSpace(record.GetString("deletedAt")) != ""
 }

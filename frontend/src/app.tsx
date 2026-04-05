@@ -21,6 +21,7 @@ import {
   Sparkles,
   Settings2,
   SquarePen,
+  Trash2,
   X,
 } from 'lucide-preact'
 import { marked } from 'marked'
@@ -35,6 +36,8 @@ import type {
   AIProjectDraft,
   ApiDocsConfig,
   Comment,
+  DeletedItem,
+  DeletePreview,
   Mention,
   Project,
   ProjectPage,
@@ -158,6 +161,7 @@ type AIAddModalState = {
 type AppRoute =
   | { kind: 'root' }
   | { kind: 'api' }
+  | { kind: 'deleted' }
   | { kind: 'mcp' }
   | {
       kind: 'project'
@@ -180,6 +184,24 @@ type BacklogDisplayNode = {
   unit: Unit
   implicit: boolean
   children: BacklogDisplayNode[]
+}
+
+type DeleteTarget =
+  | { kind: 'project'; id: string; title: string }
+  | { kind: 'unit'; id: string; title: string; projectId: string; fallbackPath: string }
+
+type DeletePreviewModalState = {
+  target: DeleteTarget
+  preview: DeletePreview
+  loading: boolean
+}
+
+type HardDeleteModalState = {
+  code: string
+  input: string
+  items: DeletedItem[]
+  allSelected: boolean
+  loading: boolean
 }
 
 const emptyProjectDraft = {
@@ -244,6 +266,10 @@ export default function App() {
   const [unitEditor, setUnitEditor] = useState<UnitDraft | null>(null)
   const [aiAddModal, setAIAddModal] = useState<AIAddModalState | null>(null)
   const [detailUnitId, setDetailUnitId] = useState<string | null>(null)
+  const [deletedItems, setDeletedItems] = useState<DeletedItem[]>([])
+  const [selectedDeletedIds, setSelectedDeletedIds] = useState<string[]>([])
+  const [deletePreviewModal, setDeletePreviewModal] = useState<DeletePreviewModalState | null>(null)
+  const [hardDeleteModal, setHardDeleteModal] = useState<HardDeleteModalState | null>(null)
   const [apiProjectId, setApiProjectId] = useState<string>(() => (typeof window === 'undefined' ? '' : window.localStorage.getItem(storageKeys.lastProjectId) || ''))
   const [apiDocsConfig, setApiDocsConfig] = useState<ApiDocsConfig>({ configured: false, headerName: 'X-API-Key', apiKey: '', apiKeyMasked: 'Not configured', openAIConfigured: false })
   const [bugsView, setBugsView] = useState<'list' | 'kanban'>(() => readStoredBugsView())
@@ -311,6 +337,10 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem(storageKeys.assignedTypes, JSON.stringify(assignedTypes))
   }, [assignedTypes])
+
+  useEffect(() => {
+    setSelectedDeletedIds((current) => current.filter((id) => deletedItems.some((item) => item.id === id)))
+  }, [deletedItems])
 
   const selectedProjectId = route.kind === 'project' ? route.projectId : route.kind === 'api' ? apiProjectId : null
 
@@ -407,6 +437,7 @@ export default function App() {
         setCurrentUser(null)
         setProjects([])
         setTree(null)
+        setDeletedItems([])
         return
       }
 
@@ -418,12 +449,24 @@ export default function App() {
 
       const response = await api.projects()
       setProjects(response.projects)
+      const deleted = await api.deletedItems()
+      setDeletedItems(deleted.items)
     } catch (err) {
       pb.authStore.clear()
       setCurrentUser(null)
+      setDeletedItems([])
       setError(err instanceof Error ? err.message : 'Failed to load session')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function loadDeletedItems() {
+    try {
+      const response = await api.deletedItems()
+      setDeletedItems(response.items)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load deleted items')
     }
   }
 
@@ -764,20 +807,94 @@ export default function App() {
     }
   }
 
-  async function deleteUnit(unitId: string) {
-    if (!window.confirm('Delete this item? Child items must already be removed.')) return
+  async function openDeleteUnit(unitId: string) {
+    const unit = unitById[unitId]
+    if (!unit) return
     try {
-      const unit = unitById[unitId]
-      await api.deleteUnit(unitId)
-      setDetailUnitId(null)
-      setUnitEditor(null)
-      if (unit) {
-        const fallback = unit.type === 'bug' ? projectBugsPath(unit.projectId) : unit.parentId ? buildUnitPath(unit.projectId, unitById, unit.parentId) : projectKanbanPath(unit.projectId)
-        navigate(fallback, true)
-      }
-      if (selectedProjectId) await loadProject(selectedProjectId)
+      const response = await api.deleteUnitPreview(unitId)
+      setDeletePreviewModal({
+        target: {
+          kind: 'unit',
+          id: unit.id,
+          title: unit.title,
+          projectId: unit.projectId,
+          fallbackPath: unit.type === 'bug' ? projectBugsPath(unit.projectId) : unit.parentId ? buildUnitPath(unit.projectId, unitById, unit.parentId) : projectKanbanPath(unit.projectId),
+        },
+        preview: response.preview,
+        loading: false,
+      })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete item')
+      setError(err instanceof Error ? err.message : 'Failed to prepare item deletion')
+    }
+  }
+
+  async function openDeleteProject(project: Project) {
+    try {
+      const response = await api.deleteProjectPreview(project.id)
+      setDeletePreviewModal({
+        target: { kind: 'project', id: project.id, title: project.name },
+        preview: response.preview,
+        loading: false,
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to prepare project deletion')
+    }
+  }
+
+  async function confirmSoftDelete() {
+    if (!deletePreviewModal) return
+    setDeletePreviewModal((current) => (current ? { ...current, loading: true } : current))
+    try {
+      if (deletePreviewModal.target.kind === 'project') {
+        await api.deleteProject(deletePreviewModal.target.id)
+        setProjects((current) => current.filter((project) => project.id !== deletePreviewModal.target.id))
+        if (selectedProjectId === deletePreviewModal.target.id) {
+          setTree(null)
+          navigate('/deleted', true)
+        }
+      } else {
+        await api.deleteUnit(deletePreviewModal.target.id)
+        setDetailUnitId(null)
+        setUnitEditor(null)
+        navigate(deletePreviewModal.target.fallbackPath, true)
+        if (deletePreviewModal.target.projectId === selectedProjectId) {
+          await loadProject(deletePreviewModal.target.projectId)
+        }
+      }
+      await loadDeletedItems()
+      setDeletePreviewModal(null)
+    } catch (err) {
+      setDeletePreviewModal((current) => (current ? { ...current, loading: false } : current))
+      setError(err instanceof Error ? err.message : 'Failed to delete')
+    }
+  }
+
+  function openHardDeleteSelected(allSelected: boolean) {
+    const items = allSelected ? deletedItems : deletedItems.filter((item) => selectedDeletedIds.includes(item.id))
+    if (!items.length) return
+    setHardDeleteModal({
+      code: randomDeleteCode(),
+      input: '',
+      items,
+      allSelected,
+      loading: false,
+    })
+  }
+
+  async function confirmHardDelete() {
+    if (!hardDeleteModal) return
+    setHardDeleteModal((current) => (current ? { ...current, loading: true } : current))
+    try {
+      await api.purgeDeleted({
+        projectIds: hardDeleteModal.items.filter((item) => item.kind === 'project').map((item) => item.id),
+        unitIds: hardDeleteModal.items.filter((item) => item.kind === 'unit').map((item) => item.id),
+      })
+      setSelectedDeletedIds([])
+      setHardDeleteModal(null)
+      await loadDeletedItems()
+    } catch (err) {
+      setHardDeleteModal((current) => (current ? { ...current, loading: false } : current))
+      setError(err instanceof Error ? err.message : 'Failed to permanently delete selected items')
     }
   }
 
@@ -939,6 +1056,7 @@ export default function App() {
   const activePage = route.kind === 'project' ? route.view : null
   const apiPageActive = route.kind === 'api' || activePage === 'api'
   const mcpPageActive = route.kind === 'mcp'
+  const deletedPageActive = route.kind === 'deleted'
   const projectRouteInvalid = route.kind === 'project' && route.view === 'kanban' && routeContext?.invalid
 
   return (
@@ -1089,6 +1207,12 @@ export default function App() {
                     {!sidebarCollapsed && <span>MCP</span>}
                   </button>
                 </li>
+                <li>
+                  <button class={`${deletedPageActive ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(deletedPath())} title="Deleted" aria-label="Deleted">
+                    <Trash2 size={16} />
+                    {!sidebarCollapsed && <span>Deleted</span>}
+                  </button>
+                </li>
               </ul>
             </div>
           </nav>
@@ -1145,6 +1269,21 @@ export default function App() {
           )}
 
           {route.kind === 'mcp' && <MCPDocsPage docsConfig={apiDocsConfig} />}
+
+          {route.kind === 'deleted' && (
+            <DeletedPage
+              items={deletedItems}
+              selectedIds={selectedDeletedIds}
+              onToggleItem={(itemId) =>
+                setSelectedDeletedIds((current) => (current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId]))
+              }
+              onToggleAll={() =>
+                setSelectedDeletedIds((current) => (current.length === deletedItems.length ? [] : deletedItems.map((item) => item.id)))
+              }
+              onDeleteSelected={() => openHardDeleteSelected(false)}
+              onDeleteAll={() => openHardDeleteSelected(true)}
+            />
+          )}
 
           {route.kind === 'project' && !tree && <div class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-6 shadow-panel">Loading project…</div>}
 
@@ -1278,6 +1417,7 @@ export default function App() {
                   suggestions={tree.tags}
                   onChange={setProjectEditor}
                   onSave={(event) => void handleUpdateProject(event)}
+                  onDelete={() => void openDeleteProject(tree.project)}
                 />
               )}
 
@@ -1309,6 +1449,7 @@ export default function App() {
                       onOpenRoute={openUnitRoute}
                       onOpenDetails={openUnitDetails}
                       onEditUnit={openEditUnit}
+                      onDeleteUnit={(unit) => void openDeleteUnit(unit.id)}
                       onCreateChild={(unit) => openNewUnit(tree.project.id, unit)}
                       onCreateAIChild={(unit) => {
                         const targetType = nextChildType[unit.type]
@@ -1442,7 +1583,7 @@ export default function App() {
 
             <div class="flex flex-wrap justify-between gap-2">
               {unitEditor.id ? (
-                <button class="btn btn-error btn-outline" type="button" onClick={() => void deleteUnit(unitEditor.id!)}>
+                <button class="btn btn-error btn-outline" type="button" onClick={() => void openDeleteUnit(unitEditor.id!)}>
                   <X size={16} />
                   Delete item
                 </button>
@@ -1478,6 +1619,75 @@ export default function App() {
         </Modal>
       )}
 
+      {deletePreviewModal && (
+        <Modal title={`Delete ${deletePreviewModal.target.kind === 'project' ? 'project' : 'item'}`} onClose={() => !deletePreviewModal.loading && setDeletePreviewModal(null)}>
+          <div class="space-y-4">
+            <div class="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm text-base-content/88">
+              This will soft delete <span class="font-semibold">{deletePreviewModal.preview.title}</span>.
+            </div>
+            <div>
+              <div class="text-sm font-semibold">Children that will also be deleted</div>
+              <div class="mt-2 max-h-64 overflow-y-auto rounded-xl border border-base-300 bg-base-100">
+                {deletePreviewModal.preview.childTitles.length ? (
+                  <ul class="divide-y divide-base-300">
+                    {deletePreviewModal.preview.childTitles.map((title) => (
+                      <li class="px-4 py-2 text-sm">{title}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div class="px-4 py-3 text-sm text-base-content/80">No child items.</div>
+                )}
+              </div>
+            </div>
+            <div class="flex items-center justify-between gap-3">
+              <div class="text-sm text-base-content/75">{deletePreviewModal.preview.totalDeleted} records will be moved to Deleted.</div>
+              <div class="flex gap-2">
+                <button class="btn btn-ghost" onClick={() => setDeletePreviewModal(null)} disabled={deletePreviewModal.loading}>
+                  Cancel
+                </button>
+                <button class="btn btn-warning" onClick={() => void confirmSoftDelete()} disabled={deletePreviewModal.loading}>
+                  {deletePreviewModal.loading ? 'Deleting…' : 'Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {hardDeleteModal && (
+        <Modal title="Permanently delete selected items" onClose={() => !hardDeleteModal.loading && setHardDeleteModal(null)}>
+          <div class="space-y-4">
+            <div class="rounded-xl border border-error/30 bg-error/10 p-4 text-sm text-base-content/88">
+              This will permanently remove the selected records from the database. This cannot be undone.
+            </div>
+            <div class="max-h-64 overflow-y-auto rounded-xl border border-base-300 bg-base-100">
+              <ul class="divide-y divide-base-300">
+                {hardDeleteModal.items.map((item) => (
+                  <li class="px-4 py-2 text-sm">{item.title}</li>
+                ))}
+              </ul>
+            </div>
+            <div class="rounded-xl border border-base-300 bg-base-100 p-4">
+              <div class="text-sm">Type <span class="font-mono font-semibold">{hardDeleteModal.code}</span> to confirm.</div>
+              <input
+                class="input input-bordered mt-3 w-full"
+                value={hardDeleteModal.input}
+                onInput={(event) => setHardDeleteModal({ ...hardDeleteModal, input: (event.currentTarget as HTMLInputElement).value })}
+                placeholder={hardDeleteModal.code}
+              />
+            </div>
+            <div class="flex justify-end gap-2">
+              <button class="btn btn-ghost" onClick={() => setHardDeleteModal(null)} disabled={hardDeleteModal.loading}>
+                Cancel
+              </button>
+              <button class="btn btn-error" onClick={() => void confirmHardDelete()} disabled={hardDeleteModal.loading || hardDeleteModal.input.trim() !== hardDeleteModal.code}>
+                {hardDeleteModal.loading ? 'Deleting…' : 'Permanently delete'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {modalUnit && (
         <Modal title={modalUnit.title} onClose={closeUnitDetails} wide>
           <UnitDetailContent
@@ -1490,6 +1700,7 @@ export default function App() {
             onInsertCommentMention={(mention) => insertMention('comment', mention)}
             onSaveComment={(event) => void saveComment(event, modalUnit.id)}
             onEdit={() => openEditUnit(modalUnit)}
+            onDelete={() => void openDeleteUnit(modalUnit.id)}
             onCreateChild={nextChildType[modalUnit.type] ? () => openNewUnit(modalUnit.projectId, modalUnit) : undefined}
             onCreateAIChild={
               nextChildType[modalUnit.type] && canAIAddType(nextChildType[modalUnit.type] as string)
@@ -1546,6 +1757,60 @@ function ProjectDirectory(props: { projects: Project[]; onCreate: () => void; on
         ))}
         {!props.projects.length && <div class="rounded-[1.5rem] border border-dashed border-base-300 bg-base-100/90 p-6 text-sm text-base-content/80">No projects yet.</div>}
       </div>
+    </section>
+  )
+}
+
+function DeletedPage(props: {
+  items: DeletedItem[]
+  selectedIds: string[]
+  onToggleItem: (itemId: string) => void
+  onToggleAll: () => void
+  onDeleteSelected: () => void
+  onDeleteAll: () => void
+}) {
+  const allSelected = props.items.length > 0 && props.selectedIds.length === props.items.length
+  return (
+    <section class="space-y-5">
+      <header class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">Deleted</p>
+        <h1 class="mt-2 text-2xl font-black">Archived and deleted items</h1>
+        <p class="mt-2 max-w-3xl text-sm text-base-content/85">Soft-deleted projects and items stay here until you permanently remove them from the database.</p>
+      </header>
+
+      <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-5 shadow-panel">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div class="text-sm text-base-content/82">{props.items.length} deleted items</div>
+          <div class="flex flex-wrap gap-2">
+            <button class="btn btn-outline btn-sm" onClick={props.onToggleAll} disabled={!props.items.length}>
+              {allSelected ? 'Clear selection' : 'Select all'}
+            </button>
+            <button class="btn btn-error btn-outline btn-sm" onClick={props.onDeleteSelected} disabled={!props.selectedIds.length}>
+              <Trash2 size={16} />
+              Delete selected
+            </button>
+            <button class="btn btn-error btn-sm" onClick={props.onDeleteAll} disabled={!props.items.length}>
+              <Trash2 size={16} />
+              Delete all
+            </button>
+          </div>
+        </div>
+
+        <div class="max-h-[60vh] overflow-y-auto rounded-xl border border-base-300 bg-base-100">
+          {props.items.length ? (
+            <ul class="divide-y divide-base-300">
+              {props.items.map((item) => (
+                <li class="flex items-center gap-3 px-4 py-3">
+                  <input type="checkbox" class="checkbox checkbox-sm" checked={props.selectedIds.includes(item.id)} onChange={() => props.onToggleItem(item.id)} />
+                  <span class="text-sm font-medium">{item.title}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div class="p-4 text-sm text-base-content/80">Nothing has been deleted yet.</div>
+          )}
+        </div>
+      </section>
     </section>
   )
 }
@@ -1775,6 +2040,7 @@ function ProjectSettingsPage(props: {
   suggestions: string[]
   onChange: (draft: typeof emptyProjectDraft) => void
   onSave: (event: Event) => void
+  onDelete: () => void
 }) {
   const [tab, setTab] = useState<'general' | 'items' | 'statuses'>('general')
 
@@ -1897,10 +2163,16 @@ function ProjectSettingsPage(props: {
 
         <div class="flex justify-between gap-3 border-t border-base-300/70 pt-4">
           <div class="text-sm text-base-content/75">Changes apply to the current project immediately after save.</div>
-          <button class="btn btn-primary" type="submit">
-            <SquarePen size={16} />
-            Save project settings
-          </button>
+          <div class="flex flex-wrap gap-2">
+            <button class="btn btn-error btn-outline" type="button" onClick={props.onDelete}>
+              <Trash2 size={16} />
+              Delete project
+            </button>
+            <button class="btn btn-primary" type="submit">
+              <SquarePen size={16} />
+              Save project settings
+            </button>
+          </div>
         </div>
       </form>
     </section>
@@ -2022,6 +2294,7 @@ function KanbanRoutePage(props: {
   onOpenRoute: (unit: Unit) => void
   onOpenDetails: (unit: Unit) => void
   onEditUnit: (unit: Unit) => void
+  onDeleteUnit: (unit: Unit) => void
   onCreateChild: (unit: Unit) => void
   onCreateAIChild: (unit: Unit) => void
   onMoveUnit: (unitId: string, status: UnitStatus) => void
@@ -2057,6 +2330,10 @@ function KanbanRoutePage(props: {
                   <Pencil size={16} />
                   <span class="sr-only">{`Edit ${typeLabels[currentUnit.type]}`}</span>
                 </button>
+                <button class="btn btn-error btn-outline btn-sm h-9 min-h-9" onClick={() => props.onDeleteUnit(currentUnit)} title={`Delete ${typeLabels[currentUnit.type]}`} aria-label={`Delete ${typeLabels[currentUnit.type]}`}>
+                  <Trash2 size={16} />
+                  <span class="sr-only">{`Delete ${typeLabels[currentUnit.type]}`}</span>
+                </button>
                 {nextChildType[currentUnit.type] && (
                   <button class="btn btn-outline btn-sm h-9 min-h-9" onClick={() => props.onCreateAIChild(currentUnit)} title={aiDisabledReason(nextChildType[currentUnit.type] as string, props.openAIConfigured) || `AI Add ${typeLabels[nextChildType[currentUnit.type] as UnitType]}`} aria-label={`AI Add ${typeLabels[nextChildType[currentUnit.type] as UnitType]}`} disabled={!props.openAIConfigured || !canAIAddType(nextChildType[currentUnit.type] as string)}>
                     <Sparkles size={16} />
@@ -2083,6 +2360,7 @@ function KanbanRoutePage(props: {
               onCommentBodyChange={props.onCommentBodyChange}
               onInsertCommentMention={props.onInsertCommentMention}
               onSaveComment={(event) => props.onSaveComment(event, currentUnit.id)}
+              onDelete={() => props.onDeleteUnit(currentUnit)}
               hideActions
               hideComments
             />
@@ -2215,6 +2493,7 @@ function UnitDetailContent(props: {
   onInsertCommentMention: (mention: Mention) => void
   onSaveComment: (event: Event) => void
   onEdit?: () => void
+  onDelete?: () => void
   onCreateChild?: () => void
   onCreateAIChild?: () => void
   openAIConfigured?: boolean
@@ -2243,6 +2522,12 @@ function UnitDetailContent(props: {
             <button class="btn btn-primary btn-sm" onClick={props.onEdit}>
               <Pencil size={16} />
               Edit item
+            </button>
+          )}
+          {props.onDelete && (
+            <button class="btn btn-error btn-outline btn-sm" onClick={props.onDelete}>
+              <Trash2 size={16} />
+              Delete item
             </button>
           )}
           {props.onCreateChild && (
@@ -3266,6 +3551,7 @@ function parseRoute(pathname: string): AppRoute {
 
   if (!segments.length) return { kind: 'root' }
   if (segments[0] === 'api' && segments.length === 1) return { kind: 'api' }
+  if (segments[0] === 'deleted' && segments.length === 1) return { kind: 'deleted' }
   if (segments[0] === 'mcp' && segments.length === 1) return { kind: 'mcp' }
   if (segments[0] !== 'projects' || !segments[1]) return { kind: 'root' }
 
@@ -3350,6 +3636,10 @@ function apiPath() {
   return '/api'
 }
 
+function deletedPath() {
+  return '/deleted'
+}
+
 function mcpPath() {
   return '/mcp'
 }
@@ -3399,6 +3689,12 @@ function plainText(markdown: string) {
 
 function escapeJson(value: string) {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')
+}
+
+function randomDeleteCode() {
+  const left = ['daisy', 'amber', 'river', 'orbit', 'cinder', 'maple', 'silver', 'lumen', 'sunny', 'velvet']
+  const right = ['cow', 'otter', 'falcon', 'meadow', 'rocket', 'harbor', 'fox', 'pine', 'comet', 'field']
+  return `${left[Math.floor(Math.random() * left.length)]}-${right[Math.floor(Math.random() * right.length)]}`
 }
 
 function gravatar(email: string) {
