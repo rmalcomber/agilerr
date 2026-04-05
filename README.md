@@ -50,7 +50,16 @@ Build a single production binary with the frontend embedded:
 
 This produces:
 
-- `backend/agilerr`
+- `output/agilerr` for a quick local run
+- versioned archives in `output/<version>/`
+
+The release script cross-compiles a default matrix from Linux:
+
+- `linux/amd64`
+- `linux/arm64`
+- `darwin/amd64`
+- `darwin/arm64`
+- `windows/amd64`
 
 When started, that binary serves:
 
