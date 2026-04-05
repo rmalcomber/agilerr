@@ -3,6 +3,8 @@ pb_data/
 output/
 frontend/dist/
 frontend/node_modules/
+tools/faq-capture/node_modules/
+tools/faq-capture/output/
 agilerr
 backend/agilerr
 .env
