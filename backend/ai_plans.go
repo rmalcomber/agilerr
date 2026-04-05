@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -128,6 +129,50 @@ func (s *AgilerrService) handleProjectDraftAI(e *core.RequestEvent) error {
 	})
 }
 
+func (s *AgilerrService) handleProjectDraftAIStream(e *core.RequestEvent) error {
+	var req aiProjectDraftRequest
+	if err := e.BindBody(&req); err != nil {
+		return badRequest(e, "invalid request body", err)
+	}
+	req.Prompt = strings.TrimSpace(req.Prompt)
+	if req.Prompt == "" {
+		return badRequest(e, "prompt is required", nil)
+	}
+
+	messages := []AIPlanChatMessage{
+		{
+			Role:    "system",
+			Content: "You help define Agile project metadata. Ask one concise clarification question at a time until the project is clear enough. Reply with JSON only using keys: ready, assistantMessage, projectDraft. projectDraft must contain name, description, and tags. Keep descriptions concise and markdown-friendly.",
+		},
+		{
+			Role:    "user",
+			Content: fmt.Sprintf("I need help fleshing out a project. Current draft:\nName: %s\nDescription:\n%s\nTags: %s\nNeed: %s", req.Draft.Name, req.Draft.Description, strings.Join(req.Draft.Tags, ", "), req.Prompt),
+		},
+	}
+	for _, msg := range req.Messages {
+		role := strings.TrimSpace(strings.ToLower(msg.Role))
+		if role != "user" && role != "assistant" {
+			continue
+		}
+		content := strings.TrimSpace(msg.Content)
+		if content == "" {
+			continue
+		}
+		messages = append(messages, AIPlanChatMessage{Role: role, Content: content})
+	}
+
+	result, err := s.streamPlannerResponse(e, messages)
+	if err != nil {
+		log.Printf("project ai add stream failed: %v", err)
+		return nil
+	}
+	return sendSSEDone(e, map[string]any{
+		"assistantMessage": result.AssistantMessage,
+		"ready":            result.Ready,
+		"projectDraft":     result.ProjectDraft,
+	})
+}
+
 func (s *AgilerrService) handleAIPlanOpen(e *core.RequestEvent) error {
 	projectID := e.Request.PathValue("projectId")
 	if _, err := findProject(s.app, projectID); err != nil {
@@ -238,6 +283,68 @@ func (s *AgilerrService) handleAIPlanMessage(e *core.RequestEvent) error {
 	dto := recordToAIPlanSession(sessionRecord)
 
 	return e.JSON(http.StatusOK, aiPlanStateResponse{
+		Session:          &dto,
+		Messages:         messages,
+		ProjectDraft:     dto.ProjectDraft,
+		Proposals:        dto.Proposals,
+		AssistantMessage: result.AssistantMessage,
+		Ready:            result.Ready,
+		HasHistory:       dto.Summary != "" || len(messages) > 0,
+	})
+}
+
+func (s *AgilerrService) handleAIPlanMessageStream(e *core.RequestEvent) error {
+	sessionRecord, err := s.app.FindRecordById(collectionAIPlanSessions, e.Request.PathValue("sessionId"))
+	if err != nil {
+		return notFound(e, "ai plan session not found")
+	}
+
+	var req aiPlanMessageRequest
+	if err := e.BindBody(&req); err != nil {
+		return badRequest(e, "invalid request body", err)
+	}
+	req.Message = strings.TrimSpace(req.Message)
+	if req.Message == "" {
+		return badRequest(e, "message is required", nil)
+	}
+
+	sessionRecord.Set("includeGrandchildren", req.IncludeGrandchildren)
+	sessionRecord.Set("status", "active")
+	if err := s.app.Save(sessionRecord); err != nil {
+		return serverError(e, err)
+	}
+	if _, err := s.saveAIPlanMessage(sessionRecord.Id, "user", req.Message); err != nil {
+		return serverError(e, err)
+	}
+
+	chat, err := s.buildPersistentPlannerMessages(sessionRecord)
+	if err != nil {
+		return serverError(e, err)
+	}
+	result, err := s.streamPlannerResponse(e, chat)
+	if err != nil {
+		log.Printf("ai add stream failed for session %s: %v", sessionRecord.Id, err)
+		return nil
+	}
+
+	if _, err := s.saveAIPlanMessage(sessionRecord.Id, "assistant", result.AssistantMessage); err != nil {
+		return serverError(e, err)
+	}
+
+	sessionRecord = sessionRecord.Fresh()
+	sessionRecord.Set("latestAssistant", result.AssistantMessage)
+	sessionRecord.Set("proposals", normalizeAIPlanProposals(result.Proposals))
+	if err := s.app.Save(sessionRecord); err != nil {
+		return serverError(e, err)
+	}
+	sessionRecord = sessionRecord.Fresh()
+
+	messages, err := loadAIPlanMessages(s.app, sessionRecord.Id)
+	if err != nil {
+		return serverError(e, err)
+	}
+	dto := recordToAIPlanSession(sessionRecord)
+	return sendSSEDone(e, aiPlanStateResponse{
 		Session:          &dto,
 		Messages:         messages,
 		ProjectDraft:     dto.ProjectDraft,
@@ -545,15 +652,34 @@ func (s *AgilerrService) runPersistentPlanner(sessionRecord *core.Record) (aiPla
 		return aiPlannerResult{}, errors.New("OPENAI_API_KEY is missing")
 	}
 
-	dto := recordToAIPlanSession(sessionRecord)
-	messages, err := loadAIPlanMessages(s.app, sessionRecord.Id)
+	chat, err := s.buildPersistentPlannerMessages(sessionRecord)
 	if err != nil {
 		return aiPlannerResult{}, err
 	}
 
-	contextPrompt, err := s.buildAIPlanContextPrompt(dto)
+	result, err := s.runPlannerChat(chat)
 	if err != nil {
 		return aiPlannerResult{}, err
+	}
+	result.ProjectDraft = nil
+	result.Proposals = normalizeAIPlanProposals(result.Proposals)
+	return result, nil
+}
+
+func (s *AgilerrService) buildPersistentPlannerMessages(sessionRecord *core.Record) ([]AIPlanChatMessage, error) {
+	if strings.TrimSpace(s.config.OpenAIAPIKey) == "" {
+		return nil, errors.New("OPENAI_API_KEY is missing")
+	}
+
+	dto := recordToAIPlanSession(sessionRecord)
+	messages, err := loadAIPlanMessages(s.app, sessionRecord.Id)
+	if err != nil {
+		return nil, err
+	}
+
+	contextPrompt, err := s.buildAIPlanContextPrompt(dto)
+	if err != nil {
+		return nil, err
 	}
 
 	shapeDescription := "Reply with JSON only using keys: ready, assistantMessage, proposals. proposals must be an array of items with id, type, title, description, tags, and optional children."
@@ -583,14 +709,7 @@ func (s *AgilerrService) runPersistentPlanner(sessionRecord *core.Record) (aiPla
 			Content: msg.Content,
 		})
 	}
-
-	result, err := s.runPlannerChat(chat)
-	if err != nil {
-		return aiPlannerResult{}, err
-	}
-	result.ProjectDraft = nil
-	result.Proposals = normalizeAIPlanProposals(result.Proposals)
-	return result, nil
+	return chat, nil
 }
 
 func (s *AgilerrService) buildAIPlanContextPrompt(session AIPlanSessionDTO) (string, error) {
@@ -611,7 +730,11 @@ func (s *AgilerrService) buildAIPlanContextPrompt(session AIPlanSessionDTO) (str
 		if session.TargetType == "bug" {
 			return fmt.Sprintf("You need to help me flesh out project bugs. Project: %s\nProject description:\n%s\nProject tags: %s\nCreate only project-level bugs. New bugs must remain in triage after creation. %s Include grandchildren: %s", project.Name, project.Description, strings.Join(project.Tags, ", "), grandchildInstruction, includeGrandchildren), nil
 		}
-		return fmt.Sprintf("You need to help me flesh out my %s for this project. Project: %s\nProject description:\n%s\nProject tags: %s\nCreate only direct %s for the project. %s Include grandchildren: %s", targetLabel, project.Name, project.Description, strings.Join(project.Tags, ", "), targetLabel, grandchildInstruction, includeGrandchildren), nil
+		siblings, err := s.aiSiblingTitles(session.ProjectID, "", session.TargetType)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("You need to help me flesh out my %s for this project. Project: %s\nProject description:\n%s\nProject tags: %s\nExisting sibling titles: %s\nCreate only direct %s for the project. %s Include grandchildren: %s", targetLabel, project.Name, project.Description, strings.Join(project.Tags, ", "), strings.Join(siblings, ", "), targetLabel, grandchildInstruction, includeGrandchildren), nil
 	}
 
 	parentRecord, err := findUnit(s.app, session.ContextID)
@@ -620,7 +743,11 @@ func (s *AgilerrService) buildAIPlanContextPrompt(session AIPlanSessionDTO) (str
 	}
 	parent := recordToUnit(parentRecord)
 	parentLabel := backendTypeLabel(parent.Type)
-	return fmt.Sprintf("You need to help me flesh out my %s. This is the parent %s: %s\nParent description:\n%s\nParent tags: %s\nCreate only direct %s under this parent. %s Include grandchildren: %s", targetLabel, parentLabel, parent.Title, parent.Description, strings.Join(parent.Tags, ", "), targetLabel, grandchildInstruction, includeGrandchildren), nil
+	siblings, err := s.aiSiblingTitles(session.ProjectID, parent.ID, session.TargetType)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("You need to help me flesh out my %s. This is the parent %s: %s\nParent description:\n%s\nParent tags: %s\nExisting sibling titles: %s\nCreate only direct %s under this parent. %s Include grandchildren: %s", targetLabel, parentLabel, parent.Title, parent.Description, strings.Join(parent.Tags, ", "), strings.Join(siblings, ", "), targetLabel, grandchildInstruction, includeGrandchildren), nil
 }
 
 func targetTypePhrase(targetType string) string {
@@ -660,6 +787,37 @@ func backendTypeLabel(unitType string) string {
 
 func allowsAIGrandchildren(targetType string) bool {
 	return targetType == "epic" || targetType == "feature"
+}
+
+func (s *AgilerrService) aiSiblingTitles(projectID, parentID, targetType string) ([]string, error) {
+	if targetType == "bug" || targetType == "project" {
+		return []string{"none"}, nil
+	}
+	records, err := loadProjectRecords(s.app, projectID)
+	if err != nil {
+		return nil, err
+	}
+	titles := make([]string, 0)
+	for _, record := range records {
+		if record.GetString("type") != targetType {
+			continue
+		}
+		if strings.TrimSpace(record.GetString("parent")) != strings.TrimSpace(parentID) {
+			continue
+		}
+		title := strings.TrimSpace(record.GetString("title"))
+		if title != "" {
+			titles = append(titles, title)
+		}
+	}
+	sort.Strings(titles)
+	if len(titles) == 0 {
+		return []string{"none"}, nil
+	}
+	if len(titles) > 20 {
+		titles = titles[:20]
+	}
+	return titles, nil
 }
 
 func (s *AgilerrService) runPlannerChat(messages []AIPlanChatMessage) (aiPlannerResult, error) {
@@ -732,6 +890,168 @@ func (s *AgilerrService) runPlannerChat(messages []AIPlanChatMessage) (aiPlanner
 	}
 	result.Proposals = normalizeAIPlanProposals(result.Proposals)
 	return result, nil
+}
+
+func (s *AgilerrService) streamPlannerResponse(e *core.RequestEvent, messages []AIPlanChatMessage) (aiPlannerResult, error) {
+	if strings.TrimSpace(s.config.OpenAIAPIKey) == "" {
+		return aiPlannerResult{}, errors.New("OPENAI_API_KEY is missing")
+	}
+	payload := struct {
+		Model    string              `json:"model"`
+		Messages []AIPlanChatMessage `json:"messages"`
+		Stream   bool                `json:"stream"`
+	}{
+		Model:    s.config.OpenAIModel,
+		Messages: messages,
+		Stream:   true,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return aiPlannerResult{}, err
+	}
+	endpoint, err := url.JoinPath(strings.TrimRight(s.config.OpenAIBaseURL, "/"), "/v1/chat/completions")
+	if err != nil {
+		return aiPlannerResult{}, err
+	}
+	httpReq, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return aiPlannerResult{}, err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+s.config.OpenAIAPIKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := s.httpClient.Do(httpReq)
+	if err != nil {
+		return aiPlannerResult{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(resp.Body)
+		sendSSEError(e, "Connecting to the OpenAI API failed.")
+		return aiPlannerResult{}, fmt.Errorf("planner request failed: %s", strings.TrimSpace(string(raw)))
+	}
+
+	prepareSSE(e)
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 8192), 1024*1024)
+	var accumulated strings.Builder
+	var displayBuffer strings.Builder
+	lastFlush := time.Now()
+	flushDisplay := func(force bool) error {
+		if displayBuffer.Len() == 0 {
+			return nil
+		}
+		if !force && displayBuffer.Len() < 24 && time.Since(lastFlush) < 90*time.Millisecond {
+			return nil
+		}
+		if err := sendSSEChunk(e, displayBuffer.String()); err != nil {
+			return err
+		}
+		displayBuffer.Reset()
+		lastFlush = time.Now()
+		return nil
+	}
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
+		if data == "[DONE]" {
+			break
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+		for _, choice := range chunk.Choices {
+			if choice.Delta.Content == "" {
+				continue
+			}
+			accumulated.WriteString(choice.Delta.Content)
+			displayBuffer.WriteString(choice.Delta.Content)
+			if strings.ContainsAny(choice.Delta.Content, ".!?\n") {
+				if err := flushDisplay(true); err != nil {
+					return aiPlannerResult{}, err
+				}
+				continue
+			}
+			if err := flushDisplay(false); err != nil {
+				return aiPlannerResult{}, err
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		sendSSEError(e, "Connecting to the OpenAI API failed.")
+		return aiPlannerResult{}, err
+	}
+	if err := flushDisplay(true); err != nil {
+		return aiPlannerResult{}, err
+	}
+	return parsePlannerResult(accumulated.String())
+}
+
+func parsePlannerResult(content string) (aiPlannerResult, error) {
+	content = strings.TrimSpace(content)
+	content = strings.TrimPrefix(content, "```json")
+	content = strings.TrimPrefix(content, "```")
+	content = strings.TrimSuffix(content, "```")
+	content = strings.TrimSpace(content)
+
+	var result aiPlannerResult
+	if err := json.Unmarshal([]byte(content), &result); err != nil {
+		return aiPlannerResult{}, fmt.Errorf("planner returned invalid JSON: %w", err)
+	}
+	if result.ProjectDraft != nil {
+		draft := normalizeAIProjectDraft(*result.ProjectDraft)
+		result.ProjectDraft = &draft
+	}
+	result.Proposals = normalizeAIPlanProposals(result.Proposals)
+	return result, nil
+}
+
+func prepareSSE(e *core.RequestEvent) {
+	e.Response.Header().Set("Content-Type", "text/event-stream")
+	e.Response.Header().Set("Cache-Control", "no-cache")
+	e.Response.Header().Set("Connection", "keep-alive")
+}
+
+func sendSSEChunk(e *core.RequestEvent, chunk string) error {
+	return sendSSEEvent(e, "chunk", chunk)
+}
+
+func sendSSEDone(e *core.RequestEvent, payload any) error {
+	return sendSSEEvent(e, "done", payload)
+}
+
+func sendSSEError(e *core.RequestEvent, message string) error {
+	return sendSSEEvent(e, "error", map[string]any{"error": message})
+}
+
+func sendSSEEvent(e *core.RequestEvent, event string, payload any) error {
+	var data []byte
+	switch v := payload.(type) {
+	case string:
+		data, _ = json.Marshal(v)
+	default:
+		var err error
+		data, err = json.Marshal(v)
+		if err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(e.Response, "event: %s\ndata: %s\n\n", event, data); err != nil {
+		return err
+	}
+	if flusher, ok := e.Response.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	return nil
 }
 
 func (s *AgilerrService) createAIProposalTree(projectRecord *core.Record, actorID, parentID string, proposal AIPlanProposal) ([]UnitDTO, error) {

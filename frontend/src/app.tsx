@@ -26,7 +26,7 @@ import {
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import md5 from 'blueimp-md5'
-import { api } from './lib/api'
+import { api, streamApi } from './lib/api'
 import { pb } from './lib/pocketbase'
 import type {
   AIPlanChatMessage,
@@ -145,7 +145,9 @@ type AIAddModalState = {
   context: AIAddContext
   input: string
   loading: boolean
+  applying: boolean
   includeGrandchildren: boolean
+  streamedAssistant: string
   session?: AIPlanState
   draftMessages: AIPlanChatMessage[]
   draftProject: AIProjectDraft
@@ -520,7 +522,9 @@ export default function App() {
       },
       input: '',
       loading: false,
+      applying: false,
       includeGrandchildren: false,
+      streamedAssistant: '',
       draftMessages: [],
       draftProject: {
         name: projectDraft.name,
@@ -545,7 +549,9 @@ export default function App() {
       },
       input: '',
       loading: true,
+      applying: false,
       includeGrandchildren: false,
+      streamedAssistant: '',
       draftMessages: [],
       draftProject: {
         name: '',
@@ -583,20 +589,25 @@ export default function App() {
     const message = aiAddModal.input.trim()
     if (!message) return
 
-    setAIAddModal({ ...aiAddModal, loading: true })
+    setAIAddModal({ ...aiAddModal, loading: true, streamedAssistant: '' })
     try {
       if (aiAddModal.context.mode === 'project-draft') {
-        const response = await api.aiProjectDraft({
+        const response = await streamApi.projectDraft(
+          {
           prompt: message,
           draft: aiAddModal.draftProject,
           messages: aiAddModal.draftMessages,
-        })
+          },
+          (chunk) =>
+            setAIAddModal((current) => (current ? { ...current, streamedAssistant: `${current.streamedAssistant}${chunk}` } : current)),
+        )
         setAIAddModal((current) =>
           current
             ? {
                 ...current,
                 loading: false,
                 input: '',
+                streamedAssistant: '',
                 draftMessages: [
                   ...current.draftMessages,
                   { role: 'user', content: message },
@@ -610,16 +621,22 @@ export default function App() {
       }
 
       if (!aiAddModal.session?.session?.id) return
-      const response = await api.sendAIPlanMessage(aiAddModal.session.session.id, {
-        message,
-        includeGrandchildren: aiAddModal.includeGrandchildren && aiAddModal.context.includeGrandchildrenAllowed,
-      })
+      const response = await streamApi.sendAIPlanMessage(
+        aiAddModal.session.session.id,
+        {
+          message,
+          includeGrandchildren: aiAddModal.includeGrandchildren && aiAddModal.context.includeGrandchildrenAllowed,
+        },
+        (chunk) =>
+          setAIAddModal((current) => (current ? { ...current, streamedAssistant: `${current.streamedAssistant}${chunk}` } : current)),
+      )
       setAIAddModal((current) =>
         current
           ? {
               ...current,
               loading: false,
               input: '',
+              streamedAssistant: '',
               session: response,
               acceptedProposalIds: response.proposals.map((proposal) => proposal.id),
             }
@@ -648,7 +665,7 @@ export default function App() {
     const sessionId = aiAddModal.session?.session?.id
     if (!sessionId) return
 
-    setAIAddModal({ ...aiAddModal, loading: true })
+    setAIAddModal({ ...aiAddModal, applying: true })
     try {
       const response = await api.applyAIPlan(sessionId, {
         proposals: aiAddModal.session?.proposals || [],
@@ -666,7 +683,7 @@ export default function App() {
         current
           ? {
               ...current,
-              loading: false,
+              applying: false,
               session: response.state,
               acceptedProposalIds: response.state.proposals.map((proposal) => proposal.id),
               editingProposalIds: [],
@@ -675,7 +692,7 @@ export default function App() {
       )
     } catch (err) {
       console.error(err)
-      setAIAddModal((current) => (current ? { ...current, loading: false } : current))
+      setAIAddModal((current) => (current ? { ...current, applying: false } : current))
       setError(err instanceof Error ? err.message : 'Failed to apply AI Add proposals')
     }
   }
@@ -2376,9 +2393,20 @@ function AIAddModalContent(props: {
   const draftMessages = props.modal.context.mode === 'project-draft' ? props.modal.draftMessages : []
   const allMessages = props.modal.context.mode === 'project-draft' ? draftMessages : sessionMessages
   const proposals = props.modal.context.mode === 'session' ? props.modal.session?.proposals || [] : []
+  const lastAssistantMessage = [...allMessages].reverse().find((message) => message.role === 'assistant')?.content || ''
+  const includeGrandchildrenLocked = allMessages.some((message) => message.role === 'user') || props.modal.loading
+  const includeGrandchildrenLabel = props.modal.includeGrandchildren ? 'Grandchildren included' : 'Direct children only'
 
   return (
-    <div class="grid gap-5 xl:grid-cols-[0.95fr,1.05fr]">
+    <div class="relative grid gap-5 xl:grid-cols-[0.95fr,1.05fr]">
+      {props.modal.applying && (
+        <div class="absolute inset-0 z-10 flex items-center justify-center rounded-[1.5rem] bg-neutral/55 backdrop-blur-sm">
+          <div class="rounded-2xl border border-base-300 bg-base-100 px-6 py-5 text-center shadow-panel">
+            <div class="loading loading-spinner loading-md text-primary" />
+            <div class="mt-3 text-sm font-semibold">Applying selected…</div>
+          </div>
+        </div>
+      )}
       <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
         <div>
           <h3 class="text-lg font-bold">Conversation</h3>
@@ -2389,40 +2417,50 @@ function AIAddModalContent(props: {
           <div class="rounded-xl border border-base-300 bg-base-200/40 p-3 text-sm text-base-content/82">Previous planning context has been loaded from the saved summary for this parent.</div>
         )}
 
-        <div class="max-h-[420px] space-y-3 overflow-auto rounded-xl border border-base-300 bg-base-200/30 p-3">
-          {!allMessages.length && <div class="text-sm text-base-content/75">No conversation yet.</div>}
-          {allMessages.map((message) => (
-            <article class={`rounded-xl border p-3 ${message.role === 'assistant' ? 'border-primary/30 bg-primary/5' : 'border-base-300 bg-base-100'}`}>
-              <div class="text-[11px] font-semibold uppercase tracking-[0.2em] text-base-content/65">{message.role === 'assistant' ? 'Assistant' : 'You'}</div>
-              <div class="mt-2 text-sm text-base-content/90 whitespace-pre-wrap">{message.content}</div>
+        <div class="rounded-xl border border-base-300 bg-base-200/30 p-3">
+          {!lastAssistantMessage && !props.modal.streamedAssistant && <div class="text-sm text-base-content/75">No question yet. Send the first prompt to start the planning conversation.</div>}
+          {!!(lastAssistantMessage || props.modal.streamedAssistant) && (
+            <article class="rounded-xl border border-primary/30 bg-primary/5 p-3">
+              <div class="text-[11px] font-semibold uppercase tracking-[0.2em] text-base-content/65">Latest question</div>
+              <div class="mt-2 whitespace-pre-wrap text-sm text-base-content/90">{props.modal.streamedAssistant || lastAssistantMessage}</div>
             </article>
-          ))}
+          )}
         </div>
 
-        {props.modal.context.includeGrandchildrenAllowed && (
-          <label class="flex items-center gap-3 rounded-xl border border-base-300 bg-base-100 p-3 text-sm">
-            <input
-              type="checkbox"
-              class="checkbox checkbox-sm"
-              checked={props.modal.includeGrandchildren}
-              onChange={(event) => props.onChange({ ...props.modal, includeGrandchildren: (event.currentTarget as HTMLInputElement).checked })}
-            />
-            <span>Include grandchildren</span>
-          </label>
-        )}
+        {props.modal.context.includeGrandchildrenAllowed &&
+          (includeGrandchildrenLocked ? (
+            <div class="rounded-xl border border-base-300 bg-base-100 p-3 text-sm text-base-content/82">{includeGrandchildrenLabel}</div>
+          ) : (
+            <label class="flex items-center gap-3 rounded-xl border border-base-300 bg-base-100 p-3 text-sm">
+              <input
+                type="checkbox"
+                class="checkbox checkbox-sm"
+                checked={props.modal.includeGrandchildren}
+                onChange={(event) => props.onChange({ ...props.modal, includeGrandchildren: (event.currentTarget as HTMLInputElement).checked })}
+              />
+              <span>Include grandchildren</span>
+            </label>
+          ))}
 
         <Field label="What do you need?">
           <textarea
             class="textarea textarea-bordered min-h-32 w-full"
             value={props.modal.input}
             onInput={(event) => props.onChange({ ...props.modal, input: (event.currentTarget as HTMLTextAreaElement).value })}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && event.ctrlKey) {
+                event.preventDefault()
+                props.onSubmit()
+              }
+            }}
             placeholder={props.modal.context.mode === 'project-draft' ? 'Describe the project you want to shape.' : 'Describe the items you want the AI to help flesh out.'}
           />
         </Field>
+        <div class="text-xs text-base-content/70">Press `Ctrl+Enter` to send.</div>
 
         <div class="flex justify-end">
-          <button class="btn btn-primary gap-2" type="button" disabled={props.modal.loading || !props.modal.input.trim()} onClick={props.onSubmit}>
-            <Sparkles size={16} />
+          <button class={`btn btn-primary gap-2 transition-all ${props.modal.loading ? 'animate-pulse' : ''}`} type="button" disabled={props.modal.loading || !props.modal.input.trim() || props.modal.applying} onClick={props.onSubmit}>
+            {props.modal.loading ? <span class="loading loading-spinner loading-sm" /> : <Sparkles size={16} class="transition-transform duration-300 group-hover:scale-110" />}
             {props.modal.loading ? 'Thinking…' : props.modal.context.submitLabel}
           </button>
         </div>
@@ -2455,22 +2493,24 @@ function AIAddModalContent(props: {
         ) : (
           <div class="space-y-4">
             {!proposals.length && <div class="rounded-xl border border-dashed border-base-300 p-4 text-sm text-base-content/75">The review list will appear once the AI has enough information to draft items.</div>}
-            {proposals.map((proposal) => (
-              <AIProposalEditor
-                key={proposal.id}
-                proposal={proposal}
-                accepted={props.modal.acceptedProposalIds.includes(proposal.id)}
-                editing={props.modal.editingProposalIds.includes(proposal.id)}
-                onToggleAccepted={() => props.onToggleAccepted(proposal.id)}
-                onToggleEditing={() => props.onToggleEditing(proposal.id)}
-                onUpdate={(patch) => props.onUpdateProposal(proposal.id, patch)}
-              />
-            ))}
+            <div class="max-h-[34rem] space-y-4 overflow-auto pr-1">
+              {proposals.map((proposal) => (
+                <AIProposalEditor
+                  key={proposal.id}
+                  proposal={proposal}
+                  accepted={props.modal.acceptedProposalIds.includes(proposal.id)}
+                  editing={props.modal.editingProposalIds.includes(proposal.id)}
+                  onToggleAccepted={() => props.onToggleAccepted(proposal.id)}
+                  onToggleEditing={() => props.onToggleEditing(proposal.id)}
+                  onUpdate={(patch) => props.onUpdateProposal(proposal.id, patch)}
+                />
+              ))}
+            </div>
             <div class="flex justify-end gap-2 border-t border-base-300 pt-4">
-              <button class="btn btn-outline" type="button" disabled={props.modal.loading} onClick={props.onDone}>
+              <button class="btn btn-outline" type="button" disabled={props.modal.loading || props.modal.applying} onClick={props.onDone}>
                 Done
               </button>
-              <button class="btn btn-primary" type="button" disabled={props.modal.loading || !props.modal.acceptedProposalIds.length} onClick={props.onApply}>
+              <button class="btn btn-primary" type="button" disabled={props.modal.loading || props.modal.applying || !props.modal.acceptedProposalIds.length} onClick={props.onApply}>
                 Apply selected
               </button>
             </div>

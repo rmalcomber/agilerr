@@ -84,3 +84,68 @@ export const api = {
       body: JSON.stringify(body),
     }),
 }
+
+function buildHeaders(init?: HeadersInit) {
+  const headers = new Headers(init || {})
+  headers.set('Content-Type', 'application/json')
+  if (pb.authStore.token) {
+    headers.set('Authorization', pb.authStore.token)
+  }
+  return headers
+}
+
+async function streamRequest<T>(path: string, body: unknown, onChunk: (text: string) => void): Promise<T> {
+  const response = await fetch(`${apiBase}${path}`, {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify(body),
+  })
+  if (!response.ok || !response.body) {
+    const payload = await response.json().catch(() => ({}))
+    throw new Error(payload.error || 'Request failed')
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let finalPayload: T | null = null
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const parts = buffer.split('\n\n')
+    buffer = parts.pop() || ''
+    for (const part of parts) {
+      const lines = part.split('\n')
+      let eventName = 'message'
+      const dataLines: string[] = []
+      for (const line of lines) {
+        if (line.startsWith('event:')) eventName = line.slice(6).trim()
+        if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
+      }
+      const data = dataLines.join('\n')
+      if (!data) continue
+      if (eventName === 'chunk') {
+        onChunk(JSON.parse(data) as string)
+      } else if (eventName === 'done') {
+        finalPayload = JSON.parse(data) as T
+      } else if (eventName === 'error') {
+        const payload = JSON.parse(data) as { error?: string }
+        throw new Error(payload.error || 'Stream failed')
+      }
+    }
+  }
+
+  if (finalPayload == null) {
+    throw new Error('Stream finished without a final response')
+  }
+  return finalPayload
+}
+
+export const streamApi = {
+  projectDraft: (body: { prompt: string; draft: AIProjectDraft; messages: AIPlanChatMessage[] }, onChunk: (text: string) => void) =>
+    streamRequest<{ assistantMessage: string; ready: boolean; projectDraft?: AIProjectDraft }>('/api/agilerr/ai-plans/project-draft/stream', body, onChunk),
+  sendAIPlanMessage: (sessionId: string, body: { message: string; includeGrandchildren: boolean }, onChunk: (text: string) => void) =>
+    streamRequest<AIPlanState>(`/api/agilerr/ai-plans/${sessionId}/message/stream`, body, onChunk),
+}
