@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background:
+    radial-gradient(circle at top, rgba(37, 99, 235, 0.18), transparent 30%),
+    radial-gradient(circle at right top, rgba(217, 70, 239, 0.16), transparent 28%),
+    linear-gradient(180deg, #0f172a 0%, #020617 100%);
+}
+
+.hero-grid {
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px);
+  background-size: 3rem 3rem;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.75), transparent 90%);
+}
+
+.glass-card {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(15, 23, 42, 0.75));
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  box-shadow:
+    0 12px 48px rgba(2, 6, 23, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.shot-frame {
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(15, 23, 42, 0.88)),
+    linear-gradient(135deg, rgba(37, 99, 235, 0.18), rgba(217, 70, 239, 0.12));
+  border: 1px solid rgba(96, 165, 250, 0.18);
+  box-shadow: 0 30px 70px rgba(2, 6, 23, 0.55);
+}
+
+.faq-details[open] summary {
+  color: white;
+}
+
+.faq-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.gradient-stroke {
+  position: relative;
+}
+
+.gradient-stroke::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.75), rgba(217, 70, 239, 0.6));
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.accent-link {
+  color: #7dd3fc;
+}
+
+.accent-link:hover {
+  color: #bae6fd;
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(96, 165, 250, 0.35) rgba(15, 23, 42, 0.2);
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 10px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(96, 165, 250, 0.35);
+  border-radius: 999px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.2);
+}
