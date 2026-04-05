@@ -458,6 +458,28 @@ export default function App() {
   }, [selectedProjectId, currentUser])
 
   useEffect(() => {
+    if (!currentUser) return
+    if (route.kind !== 'api') return
+    if (currentUser.systemAdmin) return
+    if (selectedProjectId) {
+      navigate(projectDashboardPath(selectedProjectId), true)
+      return
+    }
+    navigate('/', true)
+  }, [currentUser, route, selectedProjectId])
+
+  useEffect(() => {
+    if (!currentUser) return
+    if (route.kind !== 'mcp') return
+    if (currentUser.systemAdmin) return
+    if (selectedProjectId) {
+      navigate(projectDashboardPath(selectedProjectId), true)
+      return
+    }
+    navigate('/', true)
+  }, [currentUser, route, selectedProjectId])
+
+  useEffect(() => {
     if (loading || !currentUser || route.kind !== 'root' || !projects.length) return
     const storedProjectId = window.localStorage.getItem(storageKeys.lastProjectId)
     if (!storedProjectId) return
@@ -1513,18 +1535,22 @@ export default function App() {
             </ul>
             <div class={`mt-3 border-t border-base-300/70 pt-3 ${sidebarCollapsed ? 'w-full' : ''}`}>
               <ul class={`menu rounded-box bg-base-100/75 p-2 ${sidebarCollapsed ? 'items-center' : ''}`}>
-                <li>
-                  <button class={`${apiPageActive ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(apiPath())} title="API" aria-label="API">
-                    <SquarePen size={16} />
-                    {!sidebarCollapsed && <span>API</span>}
-                  </button>
-                </li>
-                <li>
-                  <button class={`${mcpPageActive ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(mcpPath())} title="MCP" aria-label="MCP">
-                    <LayoutGrid size={16} />
-                    {!sidebarCollapsed && <span>MCP</span>}
-                  </button>
-                </li>
+                {currentUser?.systemAdmin && (
+                  <li>
+                    <button class={`${apiPageActive ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(apiPath())} title="API" aria-label="API">
+                      <SquarePen size={16} />
+                      {!sidebarCollapsed && <span>API</span>}
+                    </button>
+                  </li>
+                )}
+                {currentUser?.systemAdmin && (
+                  <li>
+                    <button class={`${mcpPageActive ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(mcpPath())} title="MCP" aria-label="MCP">
+                      <LayoutGrid size={16} />
+                      {!sidebarCollapsed && <span>MCP</span>}
+                    </button>
+                  </li>
+                )}
                 {currentUser?.systemAdmin && (
                   <li>
                     <button class={`${usersPageActive ? 'active' : ''} ${sidebarCollapsed ? 'w-10 justify-center px-0' : ''}`} onClick={() => navigate(usersPath())} title="Users" aria-label="Users">
@@ -1576,7 +1602,7 @@ export default function App() {
             />
           )}
 
-          {route.kind === 'api' && (
+          {route.kind === 'api' && currentUser.systemAdmin && (
             <>
               {!tree ? (
                 <div class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-6 shadow-panel">Loading API context…</div>
@@ -1597,7 +1623,7 @@ export default function App() {
             </>
           )}
 
-          {route.kind === 'mcp' && <MCPDocsPage docsConfig={apiDocsConfig} />}
+          {route.kind === 'mcp' && currentUser.systemAdmin && <MCPDocsPage docsConfig={apiDocsConfig} />}
 
           {route.kind === 'users' && currentUser.systemAdmin && (
             <UsersPage
@@ -2526,8 +2552,10 @@ function ProjectDashboardPage(props: {
   const quickLinks = [
     { title: 'Kanban', body: 'Open the live delivery board and move work between lanes.', path: projectKanbanPath(props.project.id), icon: FolderKanban },
     { title: 'Backlog', body: 'Browse the hierarchy, filter by type, and expand the work breakdown.', path: projectBacklogPath(props.project.id), icon: BookOpen },
-    { title: 'API', body: 'See the available endpoints for local integrations and automation.', path: apiPath(), icon: SquarePen },
   ]
+  if (props.currentUser.systemAdmin) {
+    quickLinks.push({ title: 'API', body: 'See the available endpoints for local integrations and automation.', path: apiPath(), icon: SquarePen })
+  }
 
   return (
     <section class="space-y-5">
