@@ -204,6 +204,11 @@ type HardDeleteModalState = {
   loading: boolean
 }
 
+type ShortcutItem = {
+  keys: string
+  description: string
+}
+
 const emptyProjectDraft = {
   name: '',
   description: '',
@@ -270,6 +275,7 @@ export default function App() {
   const [selectedDeletedIds, setSelectedDeletedIds] = useState<string[]>([])
   const [deletePreviewModal, setDeletePreviewModal] = useState<DeletePreviewModalState | null>(null)
   const [hardDeleteModal, setHardDeleteModal] = useState<HardDeleteModalState | null>(null)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [apiProjectId, setApiProjectId] = useState<string>(() => (typeof window === 'undefined' ? '' : window.localStorage.getItem(storageKeys.lastProjectId) || ''))
   const [apiDocsConfig, setApiDocsConfig] = useState<ApiDocsConfig>({ configured: false, headerName: 'X-API-Key', apiKey: '', apiKeyMasked: 'Not configured', openAIConfigured: false })
   const [bugsView, setBugsView] = useState<'list' | 'kanban'>(() => readStoredBugsView())
@@ -288,6 +294,8 @@ export default function App() {
   const backlogFilterButtonRef = useRef<HTMLButtonElement | null>(null)
   const assignedFilterRef = useRef<HTMLDivElement | null>(null)
   const assignedFilterButtonRef = useRef<HTMLButtonElement | null>(null)
+  const shortcutPrefixRef = useRef<string | null>(null)
+  const shortcutPrefixTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     void loadSession()
@@ -343,6 +351,10 @@ export default function App() {
   }, [deletedItems])
 
   const selectedProjectId = route.kind === 'project' ? route.projectId : route.kind === 'api' ? apiProjectId : null
+  const activePage = route.kind === 'project' ? route.view : null
+  const apiPageActive = route.kind === 'api' || activePage === 'api'
+  const mcpPageActive = route.kind === 'mcp'
+  const deletedPageActive = route.kind === 'deleted'
 
   useEffect(() => {
     if (selectedProjectId) {
@@ -416,6 +428,7 @@ export default function App() {
     if (route.kind !== 'project') return null
     return resolveRouteContext(route, unitById)
   }, [route, unitById])
+  const projectRouteInvalid = route.kind === 'project' && route.view === 'kanban' && Boolean(routeContext?.invalid)
 
   const modalUnit = useMemo(() => {
     if (!tree) return null
@@ -423,6 +436,117 @@ export default function App() {
     if (route.kind === 'project' && route.taskId && unitById[route.taskId]) return unitById[route.taskId]
     return null
   }, [detailUnitId, route, tree, unitById])
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      const key = event.key.toLowerCase()
+      const primary = event.ctrlKey || event.metaKey
+      const modalOpen = Boolean(projectModalOpen || unitEditor || aiAddModal || deletePreviewModal || hardDeleteModal || modalUnit || shortcutsOpen)
+
+      if (event.key === 'Escape') {
+        if (hardDeleteModal && !hardDeleteModal.loading) {
+          event.preventDefault()
+          setHardDeleteModal(null)
+          return
+        }
+        if (deletePreviewModal && !deletePreviewModal.loading) {
+          event.preventDefault()
+          setDeletePreviewModal(null)
+          return
+        }
+        if (aiAddModal && !aiAddModal.loading && !aiAddModal.applying) {
+          event.preventDefault()
+          setAIAddModal(null)
+          return
+        }
+        if (unitEditor) {
+          event.preventDefault()
+          setUnitEditor(null)
+          return
+        }
+        if (projectModalOpen) {
+          event.preventDefault()
+          setProjectModalOpen(false)
+          return
+        }
+        if (modalUnit) {
+          event.preventDefault()
+          closeUnitDetails()
+          return
+        }
+        if (shortcutsOpen) {
+          event.preventDefault()
+          setShortcutsOpen(false)
+          return
+        }
+      }
+
+      if (event.key === '?' && !primary && !event.altKey && !isEditableTarget(event.target)) {
+        event.preventDefault()
+        setShortcutsOpen(true)
+        return
+      }
+
+      if (isEditableTarget(event.target)) {
+        return
+      }
+
+      if (modalOpen) {
+        return
+      }
+
+      if (primary && key === 'a') {
+        event.preventDefault()
+        const context = currentShortcutContext()
+        if (event.shiftKey) {
+          context?.addAI?.()
+        } else {
+          context?.add?.()
+        }
+        return
+      }
+
+      if (!primary && !event.altKey && !event.shiftKey) {
+        if (shortcutPrefixRef.current === 'g') {
+          event.preventDefault()
+          handleShortcutNavigation(key)
+          clearShortcutPrefix()
+          return
+        }
+        if (key === 'g') {
+          event.preventDefault()
+          shortcutPrefixRef.current = 'g'
+          if (shortcutPrefixTimerRef.current != null) window.clearTimeout(shortcutPrefixTimerRef.current)
+          shortcutPrefixTimerRef.current = window.setTimeout(() => {
+            clearShortcutPrefix()
+          }, 1000)
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      clearShortcutPrefix()
+    }
+  }, [selectedProjectId, activePage, projectModalOpen, unitEditor, aiAddModal, deletePreviewModal, hardDeleteModal, modalUnit, shortcutsOpen, route, routeContext, apiDocsConfig.openAIConfigured])
+
+  const shortcutItems = useMemo<ShortcutItem[]>(
+    () =>
+      [
+        { keys: 'Ctrl+A', description: 'Open the contextual add modal for the current project view.' },
+        { keys: 'Ctrl+Shift+A', description: 'Open contextual AI Add when OpenAI is configured.' },
+        { keys: 'G then D', description: 'Go to the project dashboard.' },
+        { keys: 'G then K', description: 'Go to kanban.' },
+        { keys: 'G then B', description: 'Go to backlog.' },
+        { keys: 'G then U', description: 'Go to bugs.' },
+        { keys: 'G then S', description: 'Go to project settings.' },
+        { keys: 'Ctrl+Enter', description: 'Submit the current form or primary action.' },
+        { keys: '?', description: 'Open this keyboard shortcuts panel.' },
+        { keys: 'Esc', description: 'Close the active modal or shortcuts panel.' },
+      ],
+    [],
+  )
 
   useEffect(() => {
     setCommentBody('')
@@ -494,6 +618,57 @@ export default function App() {
     } catch {
       setSuggestions({ units: [], users: [], tags: [] })
     }
+  }
+
+  function isEditableTarget(target: EventTarget | null) {
+    const element = target as HTMLElement | null
+    if (!element) return false
+    const tagName = element.tagName?.toLowerCase()
+    return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || element.isContentEditable
+  }
+
+  function currentShortcutContext() {
+    if (route.kind !== 'project' || !selectedProjectId) return null
+    if (route.view === 'bugs') {
+      return {
+        add: () => openNewBug(selectedProjectId),
+        addAI: apiDocsConfig.openAIConfigured ? () => void openAIAdd(selectedProjectId, 'bug') : null,
+      }
+    }
+    if (route.view === 'kanban' && routeContext?.currentUnit && nextChildType[routeContext.currentUnit.type]) {
+      const nextType = nextChildType[routeContext.currentUnit.type]
+      if (!nextType || nextType === 'task') {
+        return {
+          add: null,
+          addAI: null,
+        }
+      }
+      return {
+        add: () => openNewUnit(selectedProjectId, routeContext.currentUnit!),
+        addAI: apiDocsConfig.openAIConfigured ? () => void openAIAdd(selectedProjectId, nextType as 'epic' | 'feature' | 'story' | 'bug', routeContext.currentUnit!.id) : null,
+      }
+    }
+    return {
+      add: () => openNewUnit(selectedProjectId),
+      addAI: apiDocsConfig.openAIConfigured ? () => void openAIAdd(selectedProjectId, 'epic') : null,
+    }
+  }
+
+  function clearShortcutPrefix() {
+    shortcutPrefixRef.current = null
+    if (shortcutPrefixTimerRef.current != null) {
+      window.clearTimeout(shortcutPrefixTimerRef.current)
+      shortcutPrefixTimerRef.current = null
+    }
+  }
+
+  function handleShortcutNavigation(key: string) {
+    if (!selectedProjectId) return
+    if (key === 'd') navigate(projectDashboardPath(selectedProjectId))
+    if (key === 'k') navigate(projectKanbanPath(selectedProjectId))
+    if (key === 'b') navigate(projectBacklogPath(selectedProjectId))
+    if (key === 'u') navigate(projectBugsPath(selectedProjectId))
+    if (key === 's') navigate(projectSettingsPath(selectedProjectId))
   }
 
   function navigate(nextPath: string, replace = false) {
@@ -1053,12 +1228,6 @@ export default function App() {
     )
   }
 
-  const activePage = route.kind === 'project' ? route.view : null
-  const apiPageActive = route.kind === 'api' || activePage === 'api'
-  const mcpPageActive = route.kind === 'mcp'
-  const deletedPageActive = route.kind === 'deleted'
-  const projectRouteInvalid = route.kind === 'project' && route.view === 'kanban' && routeContext?.invalid
-
   return (
     <div class="h-screen overflow-hidden bg-[radial-gradient(circle_at_top,#1e293b,transparent_20%),linear-gradient(180deg,#0f172a_0%,#111827_100%)] text-base-content">
       <div class={`grid h-screen overflow-hidden ${sidebarCollapsed ? 'lg:grid-cols-[88px,1fr]' : 'lg:grid-cols-[260px,1fr]'}`}>
@@ -1476,9 +1645,18 @@ export default function App() {
 
       {projectModalOpen && (
         <Modal title="Create Project" onClose={() => setProjectModalOpen(false)}>
-          <form class="space-y-4" onSubmit={handleCreateProject}>
+          <form
+            class="space-y-4"
+            onSubmit={handleCreateProject}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault()
+                void handleCreateProject(event)
+              }
+            }}
+          >
             <Field label="Name">
-              <input class="input input-bordered w-full" required value={projectDraft.name} onInput={(e) => setProjectDraft({ ...projectDraft, name: (e.currentTarget as HTMLInputElement).value })} />
+              <input class="input input-bordered w-full" required autoFocus value={projectDraft.name} onInput={(e) => setProjectDraft({ ...projectDraft, name: (e.currentTarget as HTMLInputElement).value })} />
             </Field>
             <Field label="Description">
               <textarea class="textarea textarea-bordered min-h-28 w-full" value={projectDraft.description} onInput={(e) => setProjectDraft({ ...projectDraft, description: (e.currentTarget as HTMLTextAreaElement).value })} />
@@ -1506,7 +1684,16 @@ export default function App() {
 
       {unitEditor && (
         <Modal title={unitEditor.id ? `Edit ${typeLabels[unitEditor.type]}` : `Add ${typeLabels[unitEditor.type]}`} onClose={() => setUnitEditor(null)} wide>
-          <form class="space-y-5" onSubmit={saveUnit}>
+          <form
+            class="space-y-5"
+            onSubmit={saveUnit}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault()
+                void saveUnit(event)
+              }
+            }}
+          >
             <div class="grid gap-6 lg:grid-cols-[1fr,0.9fr]">
               <section class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
                 <h3 class="text-lg font-bold">Required</h3>
@@ -1532,7 +1719,7 @@ export default function App() {
                   </select>
                 </Field>
                 <Field label="Title">
-                  <input class="input input-bordered w-full" required value={unitEditor.title} onInput={(e) => setUnitEditor({ ...unitEditor, title: (e.currentTarget as HTMLInputElement).value })} />
+                  <input class="input input-bordered w-full" required autoFocus value={unitEditor.title} onInput={(e) => setUnitEditor({ ...unitEditor, title: (e.currentTarget as HTMLInputElement).value })} />
                 </Field>
                 <Field label="Description (Markdown supported)">
                   <textarea class="textarea textarea-bordered min-h-52 w-full" value={unitEditor.description} onInput={(e) => setUnitEditor({ ...unitEditor, description: (e.currentTarget as HTMLTextAreaElement).value })} />
@@ -1621,7 +1808,15 @@ export default function App() {
 
       {deletePreviewModal && (
         <Modal title={`Delete ${deletePreviewModal.target.kind === 'project' ? 'project' : 'item'}`} onClose={() => !deletePreviewModal.loading && setDeletePreviewModal(null)}>
-          <div class="space-y-4">
+          <div
+            class="space-y-4"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault()
+                if (!deletePreviewModal.loading) void confirmSoftDelete()
+              }
+            }}
+          >
             <div class="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm text-base-content/88">
               This will soft delete <span class="font-semibold">{deletePreviewModal.preview.title}</span>.
             </div>
@@ -1656,7 +1851,15 @@ export default function App() {
 
       {hardDeleteModal && (
         <Modal title="Permanently delete selected items" onClose={() => !hardDeleteModal.loading && setHardDeleteModal(null)}>
-          <div class="space-y-4">
+          <div
+            class="space-y-4"
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && hardDeleteModal.input.trim() === hardDeleteModal.code && !hardDeleteModal.loading) {
+                event.preventDefault()
+                void confirmHardDelete()
+              }
+            }}
+          >
             <div class="rounded-xl border border-error/30 bg-error/10 p-4 text-sm text-base-content/88">
               This will permanently remove the selected records from the database. This cannot be undone.
             </div>
@@ -1671,6 +1874,7 @@ export default function App() {
               <div class="text-sm">Type <span class="font-mono font-semibold">{hardDeleteModal.code}</span> to confirm.</div>
               <input
                 class="input input-bordered mt-3 w-full"
+                autoFocus
                 value={hardDeleteModal.input}
                 onInput={(event) => setHardDeleteModal({ ...hardDeleteModal, input: (event.currentTarget as HTMLInputElement).value })}
                 placeholder={hardDeleteModal.code}
@@ -1682,6 +1886,28 @@ export default function App() {
               </button>
               <button class="btn btn-error" onClick={() => void confirmHardDelete()} disabled={hardDeleteModal.loading || hardDeleteModal.input.trim() !== hardDeleteModal.code}>
                 {hardDeleteModal.loading ? 'Deleting…' : 'Permanently delete'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {shortcutsOpen && (
+        <Modal title="Keyboard shortcuts" onClose={() => setShortcutsOpen(false)}>
+          <div class="space-y-4">
+            <div class="rounded-xl border border-base-300 bg-base-100">
+              <ul class="divide-y divide-base-300">
+                {shortcutItems.map((item) => (
+                  <li class="flex items-start justify-between gap-4 px-4 py-3">
+                    <span class="text-sm text-base-content/85">{item.description}</span>
+                    <span class="shrink-0 rounded-lg border border-base-300 bg-base-200 px-2 py-1 font-mono text-xs">{item.keys}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div class="flex justify-end">
+              <button class="btn btn-primary" onClick={() => setShortcutsOpen(false)}>
+                Close
               </button>
             </div>
           </div>
@@ -2052,7 +2278,16 @@ function ProjectSettingsPage(props: {
         <p class="mt-2 text-sm text-base-content/85">Set the project metadata and the default colors used for each item type.</p>
       </div>
 
-      <form class="space-y-5" onSubmit={props.onSave}>
+      <form
+        class="space-y-5"
+        onSubmit={props.onSave}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+            event.preventDefault()
+            props.onSave(event)
+          }
+        }}
+      >
         <div class="grid gap-5 xl:grid-cols-[240px,1fr]">
           <aside class="space-y-4 rounded-[1.5rem] border border-base-300 bg-base-100 p-4">
             <div class="rounded-xl border border-base-300 bg-base-200/40 p-2">
@@ -2089,7 +2324,7 @@ function ProjectSettingsPage(props: {
                   <p class="mt-1 text-sm text-base-content/80">Edit the core project information and tagging defaults.</p>
                 </div>
                 <Field label="Name">
-                  <input class="input input-bordered w-full" required value={props.draft.name} onInput={(e) => props.onChange({ ...props.draft, name: (e.currentTarget as HTMLInputElement).value })} />
+                  <input class="input input-bordered w-full" required autoFocus value={props.draft.name} onInput={(e) => props.onChange({ ...props.draft, name: (e.currentTarget as HTMLInputElement).value })} />
                 </Field>
                 <Field label="Description">
                   <textarea class="textarea textarea-bordered min-h-36 w-full" value={props.draft.description} onInput={(e) => props.onChange({ ...props.draft, description: (e.currentTarget as HTMLTextAreaElement).value })} />
@@ -2590,7 +2825,16 @@ function UnitCommentsSection(props: {
         </div>
       </section>
 
-      <form class="space-y-4 rounded-2xl border border-base-300 bg-base-200/60 p-4" onSubmit={props.onSaveComment}>
+      <form
+        class="space-y-4 rounded-2xl border border-base-300 bg-base-200/60 p-4"
+        onSubmit={props.onSaveComment}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+            event.preventDefault()
+            props.onSaveComment(event)
+          }
+        }}
+      >
         <Field label="Add comment">
           <textarea class="textarea textarea-bordered min-h-28 w-full" value={props.commentBody} onInput={(e) => props.onCommentBodyChange((e.currentTarget as HTMLTextAreaElement).value)} />
         </Field>
@@ -2601,6 +2845,7 @@ function UnitCommentsSection(props: {
         <button class="btn btn-primary" type="submit">
           Save comment
         </button>
+        <div class="text-xs text-base-content/70">Press `Ctrl+Enter` to save.</div>
       </form>
     </div>
   )
@@ -2683,7 +2928,23 @@ function AIAddModalContent(props: {
   const includeGrandchildrenLabel = props.modal.includeGrandchildren ? 'Grandchildren included' : 'Direct children only'
 
   return (
-    <div class="relative grid gap-5 xl:grid-cols-[0.95fr,1.05fr]">
+    <div
+      class="relative grid gap-5 xl:grid-cols-[0.95fr,1.05fr]"
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' || (!event.ctrlKey && !event.metaKey)) return
+        const target = event.target as HTMLElement | null
+        const tagName = target?.tagName?.toLowerCase()
+        if (tagName === 'textarea' && target?.closest('[data-ai-input]')) return
+        event.preventDefault()
+        if (props.modal.context.mode === 'project-draft') {
+          props.onApply()
+          return
+        }
+        if (props.modal.acceptedProposalIds.length) {
+          props.onApply()
+        }
+      }}
+    >
       {props.modal.applying && (
         <div class="absolute inset-0 z-10 flex items-center justify-center rounded-[1.5rem] bg-neutral/55 backdrop-blur-sm">
           <div class="rounded-2xl border border-base-300 bg-base-100 px-6 py-5 text-center shadow-panel">
@@ -2729,11 +2990,13 @@ function AIAddModalContent(props: {
 
         <Field label="What do you need?">
           <textarea
+            data-ai-input
             class="textarea textarea-bordered min-h-32 w-full"
+            autoFocus
             value={props.modal.input}
             onInput={(event) => props.onChange({ ...props.modal, input: (event.currentTarget as HTMLTextAreaElement).value })}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && event.ctrlKey) {
+              if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
                 event.preventDefault()
                 props.onSubmit()
               }
@@ -2760,7 +3023,7 @@ function AIAddModalContent(props: {
         {props.modal.context.mode === 'project-draft' ? (
           <div class="space-y-4">
             <Field label="Project name">
-              <input class="input input-bordered w-full" value={props.modal.draftProject.name} onInput={(event) => props.onChange({ ...props.modal, draftProject: { ...props.modal.draftProject, name: (event.currentTarget as HTMLInputElement).value } })} />
+              <input class="input input-bordered w-full" autoFocus value={props.modal.draftProject.name} onInput={(event) => props.onChange({ ...props.modal, draftProject: { ...props.modal.draftProject, name: (event.currentTarget as HTMLInputElement).value } })} />
             </Field>
             <Field label="Description">
               <textarea class="textarea textarea-bordered min-h-32 w-full" value={props.modal.draftProject.description} onInput={(event) => props.onChange({ ...props.modal, draftProject: { ...props.modal.draftProject, description: (event.currentTarget as HTMLTextAreaElement).value } })} />
