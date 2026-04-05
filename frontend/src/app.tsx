@@ -1302,9 +1302,10 @@ export default function App() {
       <div class="min-h-screen bg-[radial-gradient(circle_at_top,#1e293b,transparent_28%),linear-gradient(135deg,#0f172a,#111827)] px-4 py-8">
         <div class="mx-auto grid max-w-[1600px] gap-8 lg:grid-cols-[1.05fr,0.75fr]">
           <section class="rounded-[1.5rem] border border-base-300/50 bg-base-100/90 p-7 shadow-panel backdrop-blur">
-            <p class="mb-4 inline-flex rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-accent">
-              Agilerr
-            </p>
+            <div class="mb-4 inline-flex items-center gap-3 rounded-full border border-accent/30 bg-accent/10 px-3 py-2">
+              <img src="/agilerr-mark.svg" alt="Agilerr" class="h-6 w-6" />
+              <span class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">Agilerr</span>
+            </div>
             <h1 class="max-w-2xl text-4xl font-black leading-tight text-base-content">Simple Scrum boards for local teams and Dockerized demos.</h1>
             <p class="mt-5 max-w-xl text-sm text-base-content/85">
               PocketBase handles authentication and storage. The Go API enforces the strict backlog hierarchy. Preact keeps the UI lean.
@@ -1378,7 +1379,10 @@ export default function App() {
           <div>
             <div class={`flex gap-2 ${sidebarCollapsed ? 'w-full flex-col items-center' : 'items-start justify-between'}`}>
               <button class={`min-w-0 ${sidebarCollapsed ? 'text-center' : 'text-left'}`} onClick={() => navigate('/')} title="Go to projects" aria-label="Go to projects">
-                <p class={`text-xs font-semibold uppercase tracking-[0.3em] text-accent ${sidebarCollapsed ? 'text-center' : ''}`}>Agilerr</p>
+                <div class={`flex items-center gap-2 ${sidebarCollapsed ? 'justify-center' : ''}`}>
+                  <img src="/agilerr-mark.svg" alt="Agilerr" class="h-5 w-5" />
+                  {!sidebarCollapsed && <p class="text-xs font-semibold uppercase tracking-[0.3em] text-accent">Agilerr</p>}
+                </div>
                 {!sidebarCollapsed && <h1 class="mt-1.5 text-xl font-black">Workspace</h1>}
               </button>
               <button
