@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - dev
+      - stage
+      - main
+  pull_request:
+    branches:
+      - dev
+      - stage
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Backend tests
+        working-directory: backend
+        run: go test ./...
+
+      - name: Frontend build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Website build
+        working-directory: website
+        run: deno task build
+
+      - name: Docker image smoke build
+        run: docker build -t agilerr:ci .

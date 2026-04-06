@@ -1,25 +1,63 @@
 # Agilerr
 
-Agilerr is a lean Agile Scrum board built as:
+[![GitHub Sponsors](https://img.shields.io/badge/GitHub%20Sponsors-rmalcomber-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/rmalcomber)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-rmalcomber-FFDD00?logo=buymeacoffee&logoColor=000000)](https://buymeacoffee.com/rmalcomber)
+[![Website](https://img.shields.io/badge/Website-agilerr.app-38bdf8)](https://agilerr.app)
 
-- `backend/`: Go API with embedded PocketBase for auth and storage
-- `frontend/`: Preact UI with Tailwind and daisyUI
+Agilerr is a local-first Agile Scrum board with:
+
+- a Go backend
+- embedded PocketBase for auth and storage
+- a Preact product UI
+- a Fresh marketing site for `agilerr.app`
+- optional OpenAI-powered planning flows
+- REST and MCP surfaces for automation
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Browser[Browser]
+    Website[Fresh marketing site<br/>website/]
+    Frontend[Preact product UI<br/>frontend/]
+    Backend[Go API<br/>backend/]
+    PB[PocketBase<br/>embedded auth + storage]
+    AI[OpenAI API]
+    MCP[MCP clients]
+
+    Browser --> Website
+    Browser --> Frontend
+    Frontend -->|HTTP /api/agilerr| Backend
+    Backend <--> PB
+    Backend -->|AI Add / planning| AI
+    MCP -->|HTTP or stdio MCP| Backend
+
+    classDef box fill:#0f172a,stroke:#38bdf8,color:#e2e8f0;
+    class Browser,Website,Frontend,Backend,PB,AI,MCP box;
+```
+
+## Repository Layout
+
+- `backend/`: Go API, PocketBase bootstrap, permissions, AI flows, MCP, embedded frontend serving
+- `frontend/`: Preact product app
+- `website/`: Fresh 2 marketing site and download surface
+- `scripts/`: release scripts
+- `tools/faq-capture/`: screenshot tooling for docs and marketing assets
 
 ## Features
 
-- Self-registration plus an environment-seeded admin account
-- Strict hierarchy: `Project -> Epic -> Feature -> User Story -> Task`
-- Project backlog tree and kanban board
-- Markdown descriptions and comments
-- Free-text tags with suggestions
-- Mentions for users and units using markdown links
-- REST endpoints for projects, units, comments, and Smart Add
-- Optional OpenAI-backed Smart Add refinement flow
+- strict hierarchy: `Project -> Epic -> Feature -> User Story -> Task`
+- dedicated bug workflow with triage
+- project dashboard, backlog, kanban, deleted items, API docs, MCP docs, and user admin
+- markdown descriptions and comments
+- tags, mentions, assignments, permissions, and project membership
+- AI Add planning sessions with review before creation
+- versioned binary builds and database schema tracking
 
 ## Local Development
 
-1. Copy `.env.example` to `.env` and set `ADMIN_PASSWORD`.
-2. Optional: set `HTTP_ADDR`, `AGILERR_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_MODEL`.
+1. Copy `.env.example` to `.env`
+2. Set at least `ADMIN_PASSWORD`
 3. Run the backend:
 
 ```bash
@@ -27,7 +65,7 @@ cd backend
 go run .
 ```
 
-4. Run the frontend in another terminal:
+4. Run the product frontend in another terminal:
 
 ```bash
 cd frontend
@@ -35,14 +73,22 @@ npm install
 npm run dev
 ```
 
-- Frontend: `http://localhost:5173`
-- Backend and PocketBase APIs: use `HTTP_ADDR` if set. If unset, Agilerr generates a random local port and prints it on startup.
+5. Run the marketing site if needed:
 
-In dev mode the frontend is not embedded. Vite runs separately and proxies API calls to the backend.
+```bash
+cd website
+deno task dev
+```
+
+Important local URLs:
+
+- product frontend: `http://localhost:5173`
+- marketing site: `http://localhost:8000` or the port Vite prints for the Fresh app
+- backend: uses `HTTP_ADDR` if set, otherwise generates a local port and prints it on startup
+
+In dev mode the product frontend is not embedded. Vite proxies API calls to the backend.
 
 ## Release Build
-
-Build a single production binary with the frontend embedded:
 
 ```bash
 ./scripts/build-release.sh
@@ -50,10 +96,11 @@ Build a single production binary with the frontend embedded:
 
 This produces:
 
-- `output/agilerr` for a quick local run
+- `output/agilerr` for quick local testing
 - versioned archives in `output/<version>/`
+- matching files in `website/static/downloads/`
 
-The release script cross-compiles a default matrix from Linux:
+The default cross-compiled matrix is:
 
 - `linux/amd64`
 - `linux/arm64`
@@ -61,20 +108,21 @@ The release script cross-compiles a default matrix from Linux:
 - `darwin/arm64`
 - `windows/amd64`
 
-When started, that binary serves:
-
-- the Agilerr frontend
-- the custom REST API
-- PocketBase auth/storage APIs
-
 ## Docker
+
+Local compose:
 
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-- App, frontend, and backend API: `http://localhost:8090`
+Root image build:
+
+```bash
+docker build -t rmalcomber/agilerr:tagname .
+docker push rmalcomber/agilerr:tagname
+```
 
 ## Important Environment Variables
 
@@ -88,26 +136,22 @@ docker compose up --build
 - `PB_DATA_DIR`
 - `ALLOWED_ORIGINS`
 
-If `HTTP_ADDR` is unset, Agilerr generates a random high local port.
+If `HTTP_ADDR` is unset, Agilerr generates a random local port.
 
-If `AGILERR_API_KEY` is unset, Agilerr generates a random API key for that process and prints it on startup.
+If `AGILERR_API_KEY` is unset, Agilerr generates a random API key for that run and prints it on startup.
 
-## API Surface
+## Contributing
 
-- `GET /api/agilerr/me`
-- `GET /api/agilerr/projects`
-- `POST /api/agilerr/projects`
-- `GET /api/agilerr/projects/{projectId}`
-- `GET /api/agilerr/projects/{projectId}/suggest`
-- `POST /api/agilerr/projects/{projectId}/units`
-- `PATCH /api/agilerr/units/{unitId}`
-- `POST /api/agilerr/units/{unitId}/move`
-- `DELETE /api/agilerr/units/{unitId}`
-- `GET /api/agilerr/units/{unitId}/comments`
-- `POST /api/agilerr/units/{unitId}/comments`
-- `POST /api/agilerr/smart-add`
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+For repository settings, secrets, and branch protection, see [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md).
 
-All `/api/agilerr/*` endpoints accept either:
+The intended promotion flow is:
 
-- a PocketBase user token in the `Authorization` header
-- the configured `AGILERR_API_KEY` in the `X-API-Key` header
+- feature branches -> `dev`
+- selected release candidates -> `stage`
+- tagged releases -> `main`
+
+## Funding
+
+- GitHub Sponsors: https://github.com/sponsors/rmalcomber
+- Buy Me a Coffee: https://buymeacoffee.com/rmalcomber
