@@ -143,7 +143,6 @@ If `AGILERR_API_KEY` is unset, Agilerr generates a random API key for that run a
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
-For repository settings, secrets, and branch protection, see [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md).
 
 The intended promotion flow is:
 
