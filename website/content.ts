@@ -14,6 +14,29 @@ export const binaryDownloads = [
   { label: "Windows x64", href: "/downloads/agilerr-windows-amd64.zip" },
 ];
 
+export const dockerComposeText = `services:
+  agilerr:
+    image: rmalcomber/agilerr:latest
+    container_name: agilerr
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    environment:
+      ADMIN_EMAIL: admin@agilerr.local
+      ADMIN_PASSWORD: change-me-now
+      HTTP_ADDR: 0.0.0.0:8090
+      PB_DATA_DIR: /app/pb_data
+      AGILERR_API_KEY: change-me-api-key
+      OPENAI_API_KEY: ""
+      OPENAI_BASE_URL: https://api.openai.com
+      OPENAI_MODEL: gpt-5-mini
+    volumes:
+      - agilerr_data:/app/pb_data
+
+volumes:
+  agilerr_data:
+`;
+
 export const faqItems: FaqItem[] = [
   {
     section: "Getting started",

@@ -1,12 +1,8 @@
 import { Head } from "fresh/runtime";
 import { define } from "../utils.ts";
-import { binaryDownloads } from "../content.ts";
+import { binaryDownloads, dockerComposeText } from "../content.ts";
 import { GitHubLink } from "../components/GitHubLink.tsx";
 import DockerComposeModal from "../islands/DockerComposeModal.tsx";
-
-const composeText = Deno.readTextFileSync(
-  new URL("../static/install/docker-compose.yml", import.meta.url),
-);
 
 export default define.page(function Home() {
   return (
@@ -52,7 +48,7 @@ export default define.page(function Home() {
                 >
                   Download Agilerr
                 </a>
-                <DockerComposeModal composeText={composeText} />
+                <DockerComposeModal composeText={dockerComposeText} />
                 <a
                   href="/docs"
                   class="inline-flex items-center justify-center rounded-2xl border border-white/15 px-5 py-3 text-sm font-semibold text-white transition hover:border-sky-300/40 hover:bg-white/5"
