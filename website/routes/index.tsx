@@ -1,6 +1,12 @@
 import { Head } from "fresh/runtime";
 import { define } from "../utils.ts";
 import { binaryDownloads } from "../content.ts";
+import { GitHubLink } from "../components/GitHubLink.tsx";
+import DockerComposeModal from "../islands/DockerComposeModal.tsx";
+
+const composeText = Deno.readTextFileSync(
+  new URL("../static/install/docker-compose.yml", import.meta.url),
+);
 
 export default define.page(function Home() {
   return (
@@ -14,13 +20,15 @@ export default define.page(function Home() {
           <header class="flex items-center justify-between">
             <a href="/" class="flex items-center gap-3">
               <img src="/agilerr-mark.svg" alt="Agilerr mark" class="h-10 w-10" />
-              <img src="/agilerr-logo.svg" alt="Agilerr" class="h-5 w-auto" />
+              <span class="text-lg font-semibold tracking-[0.08em] text-white">
+                Agilerr
+              </span>
             </a>
             <nav class="hidden items-center gap-6 text-sm text-slate-300 md:flex">
               <a href="/docs" class="accent-link">Docs</a>
               <a href="/faq" class="accent-link">FAQ</a>
               <a href="/donate" class="accent-link">Donate</a>
-              <a href="https://github.com/rmalcomber/agilerr" class="accent-link">GitHub</a>
+              <GitHubLink />
             </nav>
           </header>
 
@@ -44,12 +52,7 @@ export default define.page(function Home() {
                 >
                   Download Agilerr
                 </a>
-                <a
-                  href="/install/docker-compose.yml"
-                  class="inline-flex items-center justify-center rounded-2xl border border-white/15 px-5 py-3 text-sm font-semibold text-white transition hover:border-sky-300/40 hover:bg-white/5"
-                >
-                  Docker Compose
-                </a>
+                <DockerComposeModal composeText={composeText} />
                 <a
                   href="/docs"
                   class="inline-flex items-center justify-center rounded-2xl border border-white/15 px-5 py-3 text-sm font-semibold text-white transition hover:border-sky-300/40 hover:bg-white/5"
