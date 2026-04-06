@@ -49,7 +49,9 @@ jobs:
 
       - name: Website build
         working-directory: website
-        run: deno task build
+        run: |
+          deno install
+          deno task build
 
       - name: Docker image smoke build
         run: docker build -t agilerr:ci .
