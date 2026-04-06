@@ -95,6 +95,10 @@ jobs:
         with:
           deno-version: v2.x
 
+      - name: Install website dependencies
+        working-directory: website
+        run: deno install
+
       - name: Download release assets into website
         env:
           GH_TOKEN: ${{ github.token }}
