@@ -1,21 +1,43 @@
 ---
 title: Configuration
-description: Environment variables that control Agilerr.
+description: The settings you will want to change first.
 sidebar:
-  order: 2
+  order: 3
 ---
 
-Agilerr is configured with environment variables. Copy `.env.example` to `.env` for local development.
+Agilerr is configured with environment variables. For local development copy `.env.example` to `.env`. For the binary, export them before starting it. For Docker, set them under `environment:` in the compose file.
 
-| Variable | Purpose |
+## The ones that matter first
+
+| Variable | Why you set it |
 | --- | --- |
-| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Seed the first admin user. Set at least the password. |
-| `PB_DATA_DIR` | Where PocketBase stores its data. Put this on a persistent volume. |
-| `HTTP_ADDR` | Bind address and port, e.g. `0.0.0.0:8090`. Blank = random local port. |
-| `AGILERR_API_KEY` | Enables API-key access for REST and MCP. Blank = random key per run. |
-| `ALLOWED_ORIGINS` | Origins allowed by CORS in development. |
-| `OPENAI_API_KEY` | Enables [AI Add](../../guides/ai-add/). Optional. |
-| `OPENAI_BASE_URL` | OpenAI-compatible endpoint. Default `https://api.openai.com`. |
-| `OPENAI_MODEL` | Model for AI Add. Default `gpt-5-mini`. |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Create the first admin user. Defaults are `admin@agilerr.local` and `change-me-now`: change the password. |
+| `PB_DATA_DIR` | Where PocketBase keeps its data. Put it on persistent storage and back it up. |
+| `HTTP_ADDR` | Address and port to listen on, e.g. `0.0.0.0:8090`. Leave blank for a random local port. |
+| `AGILERR_API_KEY` | Key for REST and MCP access. Leave blank for a random key per run. |
 
-Agilerr works without any OpenAI configuration: AI Add is simply unavailable.
+## Optional
+
+| Variable | Why you set it |
+| --- | --- |
+| `OPENAI_API_KEY` | Turns on [AI Add](../../guides/ai-add/). |
+| `OPENAI_BASE_URL` | Point AI Add at an OpenAI-compatible endpoint. Default `https://api.openai.com`. |
+| `OPENAI_MODEL` | The model AI Add uses. Default `gpt-5-mini`. |
+| `ALLOWED_ORIGINS` | Comma-separated origins allowed for browser access in development. |
+
+The full list with defaults is in [Environment variables](../../reference/environment-variables/).
+
+## A stable setup
+
+```bash
+export ADMIN_EMAIL=you@example.com
+export ADMIN_PASSWORD='a-long-passphrase'
+export HTTP_ADDR=0.0.0.0:8090
+export PB_DATA_DIR=/var/lib/agilerr
+export AGILERR_API_KEY="$(openssl rand -hex 24)"
+./agilerr
+```
+
+:::note
+`ADMIN_EMAIL` and `ADMIN_PASSWORD` seed the first admin. Once accounts exist, manage passwords from the **Users** page.
+:::

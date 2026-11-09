@@ -1,40 +1,56 @@
 ---
-title: Architecture and development
-description: How the pieces fit and how to run them locally.
+title: Architecture
+description: How the pieces fit together.
 sidebar:
-  order: 2
+  order: 3
 ---
+
+```text
+Browser ──▶ Marketing site (website/, Fresh)      agilerr.app
+Browser ──▶ Product UI (frontend/, Preact)
+              │  HTTP /api/agilerr
+              ▼
+          Go API (backend/) ◀──▶ PocketBase (embedded auth + storage)
+              │                        
+              ├──▶ OpenAI-compatible API   (AI Add, optional)
+              └──▶ MCP clients             (HTTP or stdio)
+```
 
 | Folder | Contents |
 | --- | --- |
 | `backend/` | Go API, PocketBase bootstrap, permissions, AI flows, MCP, embedded frontend serving |
 | `frontend/` | Preact product app |
-| `website/` | Fresh 2 marketing site for agilerr.app |
+| `website/` | Fresh 2 marketing site and download surface for agilerr.app |
 | `scripts/` | Release scripts |
-| `tools/faq-capture/` | Puppeteer tool that captures the screenshots used in these docs |
+| `tools/faq-capture/` | Puppeteer tool for capturing product screenshots |
 
-## Run in development
+## One binary
 
-```bash
-cp .env.example .env     # set ADMIN_PASSWORD
-cd backend && go run .
-cd frontend && npm install && npm run dev   # http://localhost:5173
-```
+In a release build the product frontend is **embedded in the Go binary**, so a single file serves the UI, the API and PocketBase. In development the frontend is not embedded: Vite serves it on port 5173 and proxies API calls to the backend.
 
-In development the frontend is not embedded; Vite proxies API calls to the backend.
+## Data
 
-## Release build
+PocketBase collections:
 
-```bash
-./scripts/build-release.sh
-```
+| Collection | Holds |
+| --- | --- |
+| `users` | accounts |
+| `projects` | projects |
+| `units` | epics, features, stories, tasks and bugs |
+| `comments` | item comments |
+| `project_memberships` | per-project permissions |
+| `ai_plan_sessions`, `ai_plan_messages` | AI Add conversations |
+| `app_meta` | schema and binary version state |
 
-Builds `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` and `windows/amd64`, with the frontend embedded in each binary.
+## Where things are in the backend
 
-## Upgrades
-
-The binary stores its schema version and last binary version in database metadata, so future releases can apply ordered migrations when the database is older than the binary.
-
-## Updating these docs
-
-Screenshots come from `tools/faq-capture` (see its README) and live in `docs/src/assets/screenshots/`. Contributions: see `CONTRIBUTING.md`.
+| File | Role |
+| --- | --- |
+| `main.go` | startup, `version` and `mcp` commands |
+| `config.go` | environment variables |
+| `schema.go` | collection definitions |
+| `models.go` | types, validation, hierarchy rules |
+| `service.go` | routes, permission checks, API handlers |
+| `ai_plans.go` | AI Add sessions |
+| `mcp.go` | MCP over HTTP and stdio |
+| `versioning.go` | schema and binary version tracking |
