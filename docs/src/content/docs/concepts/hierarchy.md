@@ -7,12 +7,10 @@ sidebar:
 
 Planning in Agilerr follows a strict hierarchy:
 
-```text
-Project
-└── Epic
-    └── Feature
-        └── User Story
-            └── Task
+```mermaid
+flowchart TD
+  P[Project] --> E[Epic] --> F[Feature] --> S[User Story] --> T[Task]
+  P -.-> B[Bug: outside the hierarchy]
 ```
 
 | Level | Use it for |

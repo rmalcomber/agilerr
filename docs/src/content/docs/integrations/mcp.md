@@ -5,6 +5,10 @@ sidebar:
   order: 2
 ---
 
+:::caution[Beta]
+Agilerr is in beta. Tool names and arguments may change before 1.0; the [release notes](/releases/) say when they do.
+:::
+
 Agilerr speaks [MCP](https://modelcontextprotocol.io) so AI agents can read and create items on your board. It is available two ways: **over HTTP** from the running app, and **over stdio**.
 
 ![The MCP docs page](../../../assets/screenshots/mcp.webp)

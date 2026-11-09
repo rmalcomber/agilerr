@@ -5,15 +5,39 @@ sidebar:
   order: 3
 ---
 
-```text
-Browser ──▶ Marketing site (website/, Fresh)      agilerr.app
-Browser ──▶ Product UI (frontend/, Preact)
-              │  HTTP /api/agilerr
-              ▼
-          Go API (backend/) ◀──▶ PocketBase (embedded auth + storage)
-              │                        
-              ├──▶ OpenAI-compatible API   (AI Add, optional)
-              └──▶ MCP clients             (HTTP or stdio)
+```mermaid
+flowchart TD
+  site[Marketing site<br/>website/, Fresh] -.-> browser
+  browser([Browser]) -->|HTTP /api/agilerr| api
+  subgraph bin[One Go binary]
+    api[Go API<br/>backend/] <--> pb[(Embedded PocketBase<br/>auth + storage)]
+    ui[Embedded Preact UI<br/>frontend/]
+  end
+  browser --> ui
+  api -->|optional| ai[OpenAI-compatible API<br/>AI Add]
+  mcp([MCP clients]) -->|HTTP or stdio| api
+```
+
+### Request and permission flow
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant A as requireAPIAccess
+  participant H as Handler
+  participant P as PocketBase
+  C->>A: request (X-API-Key or session token)
+  alt API key matches
+    A->>H: act as admin user (system admin)
+  else valid session
+    A->>H: act as that user
+  else neither
+    A-->>C: 401
+  end
+  H->>H: check project permission (viewUnits, editUnits, ...)
+  H->>P: read / write
+  P-->>H: records
+  H-->>C: JSON
 ```
 
 | Folder | Contents |

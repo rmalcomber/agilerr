@@ -4,6 +4,9 @@
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-rmalcomber-FFDD00?logo=buymeacoffee&logoColor=000000)](https://buymeacoffee.com/rmalcomber)
 [![Website](https://img.shields.io/badge/Website-agilerr.app-38bdf8)](https://agilerr.app)
 
+> **Beta.** Agilerr works and is used, but features, the API and the data layout may change between releases.
+> Full documentation: https://rmalcomber.github.io/agilerr/
+
 Agilerr is a local-first Agile Scrum board with:
 
 - a Go backend

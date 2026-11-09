@@ -5,6 +5,10 @@ sidebar:
   order: 1
 ---
 
+### Is Agilerr production ready?
+
+It is in **beta**. It works and is used, but features, the API and the data layout may change between `0.x` releases. Back up your data directory before upgrading and read the [release notes](/releases/).
+
 ### What does Agilerr run as?
 
 A single application. The Go backend, embedded PocketBase auth and storage, and the UI are served together from one binary in release builds.

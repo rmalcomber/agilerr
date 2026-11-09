@@ -5,6 +5,10 @@ sidebar:
   order: 1
 ---
 
+:::caution[Beta]
+Agilerr is in beta: features, the API and the data layout may change between releases. Back up your data directory before upgrading ([Versions and upgrades](/reference/upgrades/)). Every release is listed under [Releases](/releases/).
+:::
+
 Agilerr runs as one application. You need no separate database: PocketBase is embedded, so all you need is somewhere persistent for its data directory.
 
 ## From a binary
