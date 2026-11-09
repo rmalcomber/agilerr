@@ -1,0 +1,5 @@
+{
+  "size": "one binary, web interface included",
+  "platforms": "Linux, macOS, Windows, Docker",
+  "dependencies": "none: PocketBase is embedded"
+}

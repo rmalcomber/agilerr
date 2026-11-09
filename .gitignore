@@ -30,3 +30,8 @@ pnpm-debug.log*
 Thumbs.db
 .idea/
 .vscode/
+
+# docs
+docs/node_modules/
+docs/dist/
+docs/.astro/

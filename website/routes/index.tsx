@@ -31,7 +31,7 @@ export default define.page(function Home() {
           <main class="flex flex-1 items-center py-16">
             <div class="max-w-4xl">
               <p class="mb-6 text-xs font-semibold uppercase tracking-[0.35em] text-sky-300/80">
-                agilerr.app
+                agilerr.app · beta
               </p>
               <h1 class="text-5xl font-semibold tracking-tight text-white sm:text-6xl lg:text-7xl">
                 Agile delivery without the hosted stack.

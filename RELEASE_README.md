@@ -2,6 +2,8 @@
 
 Agilerr is a local-first Agile Scrum board that runs as a single application.
 
+**Agilerr is in beta.** It works and is used, but features, the API and the data layout may change between releases. Back up your data directory before upgrading. Documentation: https://rmalcomber.github.io/agilerr/
+
 This release package includes:
 
 - the Agilerr web UI
